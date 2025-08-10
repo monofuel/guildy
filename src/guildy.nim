@@ -1,12 +1,12 @@
 ## Public interface to Guildy
-## Minimal Discord client (REST + Gateway) to support features used by Racha
+## Minimal Discord client (REST + Gateway)
 
 import
   std/[strformat, uri, json, options, times, os, strutils, asyncdispatch, random],
   curly, ws, jsony
 
 # -------------------------------
-# Types (subset used by Racha)
+# Types
 
 type
   Author* = ref object
@@ -110,6 +110,7 @@ proc newGuildyClient*(
 ): GuildyClient =
   if token.len == 0:
     raise newException(GuildyError, "Missing Discord bot token")
+  randomize()
   result = GuildyClient(
     token: token,
     userAgent: userAgent,
@@ -236,7 +237,18 @@ proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
     "d": {
       "token": c.token,
       "properties": {"$os": "linux", "$browser": "guildy", "$device": "guildy"},
-      "intents": c.intents
+      "intents": c.intents,
+      "presence": {
+        "status": "online",
+        "since": nil,
+        "activities": [
+          {
+            "name": "Guildy",
+            "type": 2
+          }
+        ],
+        "afk": false
+      }
     }
   }
   await ws.send(toJson(payload))
@@ -248,40 +260,59 @@ proc handleEvent(
   onRaw: OnRawEvent,
   onMessage: OnMessageEvent
 ) {.async.} =
-  # Update sequence if present
-  if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
-    c.sequence = event["s"].getInt
+  try:
+    # Update sequence if present
+    if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
+      c.sequence = event["s"].getInt
 
-  let t = if event.hasKey("t"): event["t"].getStr else: ""
-  if t == "READY":
-    c.sessionId = event["d"]["session_id"].getStr
-  elif t == "RESUMED":
-    discard
-  elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
-    if onMessage != nil:
-      let msg = fromJson(event["d"].pretty, DiscordMessage)
-      onMessage(c, msg)
-  elif t == "VOICE_STATE_UPDATE" or t == "VOICE_SERVER_UPDATE":
-    discard # placeholder, caller may handle via onRaw
-
-  if event.hasKey("op"):
-    let op = event["op"].getInt
-    case op
-    of 7:
-      # Reconnect request
-      ws.close()
-      raise newException(WebSocketClosedError, "Discord Reconnect")
-    of 1:
-      # Heartbeat request
-      await c.sendHeartbeat(ws)
-    of 11:
-      # Heartbeat ack
-      c.lastHeartbeat = epochTime()
-    else:
+    let t = if event.hasKey("t"): event["t"].getStr else: ""
+    if t == "READY":
+      c.sessionId = event["d"]["session_id"].getStr
+      # After READY, send a presence update to appear online
+      let presenceUpdate = %*{
+        "op": 3,
+        "d": {
+          "since": nil,
+          "status": "online",
+          "activities": [ { "name": "Guildy", "type": 0 } ],
+          "afk": false
+        }
+      }
+      await ws.send(toJson(presenceUpdate))
+    elif t == "RESUMED":
+      discard
+    elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
+      if onMessage != nil:
+        let msg = fromJson(event["d"].pretty, DiscordMessage)
+        onMessage(c, msg)
+    elif t == "VOICE_STATE_UPDATE" or t == "VOICE_SERVER_UPDATE":
       discard
 
-  if onRaw != nil:
-    onRaw(c, event)
+    if event.hasKey("op"):
+      let op = event["op"].getInt
+      case op
+      of 7:
+        # Reconnect request
+        ws.close()
+        raise newException(WebSocketClosedError, "Discord Reconnect")
+      of 1:
+        # Heartbeat request
+        await c.sendHeartbeat(ws)
+      of 9:
+        # Invalid session -> full re-identify
+        await sleepAsync(1000)
+        c.sessionId = ""
+        await c.identifySession(ws)
+      of 11:
+        # Heartbeat ack
+        c.lastHeartbeat = epochTime()
+      else:
+        discard
+
+    if onRaw != nil:
+      onRaw(c, event)
+  except CatchableError:
+    discard
 
 proc eventLoop(
   c: GuildyClient,
@@ -290,17 +321,24 @@ proc eventLoop(
   onMessage: OnMessageEvent
 ) {.async.} =
   while ws.readyState == ReadyState.Open and c.running:
-    let packet = await ws.receiveStrPacket()
-    let event = parseJson(packet)
-    await c.handleEvent(ws, event, onRaw, onMessage)
+    try:
+      let packet = await ws.receiveStrPacket()
+      let event = parseJson(packet)
+      await c.handleEvent(ws, event, onRaw, onMessage)
+    except CatchableError:
+      # if receive/parse fails, continue; break if socket closed
+      if ws.readyState != ReadyState.Open:
+        break
 
 proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent) {.async.} =
+  echo "CONNECTING TO GATEWAY"
   let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=9&encoding=json")
   c.ws = wsClient
-
+  echo "connected"
   # Receive Hello, start heartbeat
   let helloPacket = await wsClient.receiveStrPacket()
   let helloData = parseJson(helloPacket)["d"]
+  echo "HELLO: ", helloData
   let heartbeatIntervalMs = helloData["heartbeat_interval"].getFloat
   let jitter = 0.1
   asyncCheck c.heartbeat(wsClient, heartbeatIntervalMs, jitter)
@@ -311,6 +349,8 @@ proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessag
     await c.identifySession(wsClient)
 
   await c.eventLoop(wsClient, onRaw, onMessage)
+  # ensure close when loop exits
+  try: wsClient.close() except: discard
 
 proc startGateway*(
   c: GuildyClient,
@@ -321,11 +361,16 @@ proc startGateway*(
   while c.running:
     try:
       waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage)
-    except WebSocketClosedError:
+    except WebSocketClosedError as e:
+      echo "WEBSOCKET CLOSED: ", e.msg
       # reconnect
       if c.running:
         sleep(1000)
+        # on reconnect attempts, force identify if too long without heartbeat
+        if c.lastHeartbeat != 0 and (epochTime() - c.lastHeartbeat) > 120:
+          c.sessionId = ""
     except CatchableError as e:
+      echo "ERROR: ", e.msg
       # backoff on generic errors
       if c.running:
         sleep(3000)
