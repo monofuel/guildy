@@ -260,59 +260,50 @@ proc handleEvent(
   onRaw: OnRawEvent,
   onMessage: OnMessageEvent
 ) {.async.} =
-  try:
-    # Update sequence if present
-    if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
-      c.sequence = event["s"].getInt
+  if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
+    c.sequence = event["s"].getInt
 
-    let t = if event.hasKey("t"): event["t"].getStr else: ""
-    if t == "READY":
-      c.sessionId = event["d"]["session_id"].getStr
-      # After READY, send a presence update to appear online
-      let presenceUpdate = %*{
-        "op": 3,
-        "d": {
-          "since": nil,
-          "status": "online",
-          "activities": [ { "name": "Guildy", "type": 0 } ],
-          "afk": false
-        }
+  let t = if event.hasKey("t"): event["t"].getStr else: ""
+  if t == "READY":
+    c.sessionId = event["d"]["session_id"].getStr
+    let presenceUpdate = %*{
+      "op": 3,
+      "d": {
+        "since": nil,
+        "status": "online",
+        "activities": [ { "name": "Guildy", "type": 2 } ],
+        "afk": false
       }
-      await ws.send(toJson(presenceUpdate))
-    elif t == "RESUMED":
-      discard
-    elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
-      if onMessage != nil:
-        let msg = fromJson(event["d"].pretty, DiscordMessage)
-        onMessage(c, msg)
-    elif t == "VOICE_STATE_UPDATE" or t == "VOICE_SERVER_UPDATE":
-      discard
-
-    if event.hasKey("op"):
-      let op = event["op"].getInt
-      case op
-      of 7:
-        # Reconnect request
-        ws.close()
-        raise newException(WebSocketClosedError, "Discord Reconnect")
-      of 1:
-        # Heartbeat request
-        await c.sendHeartbeat(ws)
-      of 9:
-        # Invalid session -> full re-identify
-        await sleepAsync(1000)
-        c.sessionId = ""
-        await c.identifySession(ws)
-      of 11:
-        # Heartbeat ack
-        c.lastHeartbeat = epochTime()
-      else:
-        discard
-
-    if onRaw != nil:
-      onRaw(c, event)
-  except CatchableError:
+    }
+    await ws.send(toJson(presenceUpdate))
+  elif t == "RESUMED":
     discard
+  elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
+    if onMessage != nil:
+      let msg = fromJson(event["d"].pretty, DiscordMessage)
+      onMessage(c, msg)
+  elif t == "VOICE_STATE_UPDATE" or t == "VOICE_SERVER_UPDATE":
+    discard
+
+  if event.hasKey("op"):
+    let op = event["op"].getInt
+    case op
+    of 7:
+      ws.close()
+      raise newException(WebSocketClosedError, "Discord Reconnect")
+    of 1:
+      await c.sendHeartbeat(ws)
+    of 9:
+      await sleepAsync(1000)
+      c.sessionId = ""
+      await c.identifySession(ws)
+    of 11:
+      c.lastHeartbeat = epochTime()
+    else:
+      discard
+
+  if onRaw != nil:
+    onRaw(c, event)
 
 proc eventLoop(
   c: GuildyClient,
@@ -321,24 +312,19 @@ proc eventLoop(
   onMessage: OnMessageEvent
 ) {.async.} =
   while ws.readyState == ReadyState.Open and c.running:
-    try:
-      let packet = await ws.receiveStrPacket()
-      let event = parseJson(packet)
-      await c.handleEvent(ws, event, onRaw, onMessage)
-    except CatchableError:
-      # if receive/parse fails, continue; break if socket closed
-      if ws.readyState != ReadyState.Open:
-        break
+    let packet = await ws.receiveStrPacket()
+    let event = parseJson(packet)
+    await c.handleEvent(ws, event, onRaw, onMessage)
 
 proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent) {.async.} =
-  echo "CONNECTING TO GATEWAY"
+  echo "Connecting to Discord Gateway"
   let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=9&encoding=json")
   c.ws = wsClient
-  echo "connected"
+  echo "Gateway connected"
   # Receive Hello, start heartbeat
   let helloPacket = await wsClient.receiveStrPacket()
   let helloData = parseJson(helloPacket)["d"]
-  echo "HELLO: ", helloData
+  echo "Hello received; heartbeat_interval=", helloData["heartbeat_interval"].getFloat
   let heartbeatIntervalMs = helloData["heartbeat_interval"].getFloat
   let jitter = 0.1
   asyncCheck c.heartbeat(wsClient, heartbeatIntervalMs, jitter)
@@ -361,17 +347,15 @@ proc startGateway*(
   while c.running:
     try:
       waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage)
-    except WebSocketClosedError as e:
-      echo "WEBSOCKET CLOSED: ", e.msg
-      # reconnect
+    except WebSocketClosedError:
+      echo "WebSocket closed; will reconnect"
       if c.running:
         sleep(1000)
         # on reconnect attempts, force identify if too long without heartbeat
         if c.lastHeartbeat != 0 and (epochTime() - c.lastHeartbeat) > 120:
           c.sessionId = ""
     except CatchableError as e:
-      echo "ERROR: ", e.msg
-      # backoff on generic errors
+      echo "Gateway error: ", e.msg
       if c.running:
         sleep(3000)
 
