@@ -31,6 +31,7 @@ type
     count*: int
     me*: bool
     emoji*: DiscordEmoji
+    user_id*: Option[string]
 
   DiscordAttachment* = ref object
     id*: string
@@ -97,7 +98,9 @@ type
 const
   DefaultUserAgent = "Guildy Client"
   DefaultCurlTimeout: float32 = 60 * 3
-  DefaultIntents = 4224 # DM + VOICE
+  # Intents: VOICE_STATES(128) + GUILD_MESSAGES(512) + GUILD_MESSAGE_REACTIONS(1024)
+  #          + DIRECT_MESSAGES(4096) + DIRECT_MESSAGE_REACTIONS(8192)
+  DefaultIntents = 13952
   DefaultCacheDir = "/tmp/guildy_cache/"
 
 proc newGuildyClient*(
@@ -204,6 +207,7 @@ proc getDiscordAttachment*(c: GuildyClient, attachment: DiscordAttachment, cache
 type
   OnRawEvent* = proc(c: GuildyClient, event: JsonNode) {.gcsafe.}
   OnMessageEvent* = proc(c: GuildyClient, msg: DiscordMessage) {.gcsafe.}
+  OnReactionEvent* = proc(c: GuildyClient, channelId: string, messageId: string, emoji: DiscordEmoji, userId: string) {.gcsafe.}
 
 proc stop*(c: GuildyClient) =
   c.running = false
@@ -258,7 +262,8 @@ proc handleEvent(
   ws: ws.WebSocket,
   event: JsonNode,
   onRaw: OnRawEvent,
-  onMessage: OnMessageEvent
+  onMessage: OnMessageEvent,
+  onReaction: OnReactionEvent
 ) {.async.} =
   if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
     c.sequence = event["s"].getInt
@@ -284,6 +289,18 @@ proc handleEvent(
       onMessage(c, msg)
   elif t == "VOICE_STATE_UPDATE" or t == "VOICE_SERVER_UPDATE":
     discard
+  elif t == "MESSAGE_REACTION_ADD":
+    if onReaction != nil:
+      let d = event["d"]
+      var em = DiscordEmoji(id: "", name: "", animated: false)
+      if d.hasKey("emoji"):
+        if d["emoji"].hasKey("id"): em.id = d["emoji"]["id"].getStr
+        if d["emoji"].hasKey("name"): em.name = d["emoji"]["name"].getStr
+        if d["emoji"].hasKey("animated"): em.animated = d["emoji"]["animated"].getBool
+      let channelId = d["channel_id"].getStr
+      let messageId = d["message_id"].getStr
+      let userId = d["user_id"].getStr
+      onReaction(c, channelId, messageId, em, userId)
 
   if event.hasKey("op"):
     let op = event["op"].getInt
@@ -309,14 +326,15 @@ proc eventLoop(
   c: GuildyClient,
   ws: ws.WebSocket,
   onRaw: OnRawEvent,
-  onMessage: OnMessageEvent
+  onMessage: OnMessageEvent,
+  onReaction: OnReactionEvent
 ) {.async.} =
   while ws.readyState == ReadyState.Open and c.running:
     let packet = await ws.receiveStrPacket()
     let event = parseJson(packet)
-    await c.handleEvent(ws, event, onRaw, onMessage)
+    await c.handleEvent(ws, event, onRaw, onMessage, onReaction)
 
-proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent) {.async.} =
+proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent, onReaction: OnReactionEvent) {.async.} =
   echo "Connecting to Discord Gateway"
   let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=9&encoding=json")
   c.ws = wsClient
@@ -334,19 +352,20 @@ proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessag
   else:
     await c.identifySession(wsClient)
 
-  await c.eventLoop(wsClient, onRaw, onMessage)
+  await c.eventLoop(wsClient, onRaw, onMessage, onReaction)
   # ensure close when loop exits
   try: wsClient.close() except: discard
 
 proc startGateway*(
   c: GuildyClient,
   onRaw: OnRawEvent = nil,
-  onMessage: OnMessageEvent = nil
+  onMessage: OnMessageEvent = nil,
+  onReaction: OnReactionEvent = nil
 ) =
   ## Blocking loop that maintains a gateway connection and auto-reconnects.
   while c.running:
     try:
-      waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage)
+      waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage, onReaction)
     except WebSocketClosedError:
       echo "WebSocket closed; will reconnect"
       if c.running:

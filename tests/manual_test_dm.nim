@@ -1,6 +1,6 @@
 import
   std/[unittest, os, strutils, tables, times, locks, json],
-  ../src/guildy
+  jsony, guildy
 
 # manual dm test
 # this test is manually ran by an monofuel
@@ -97,3 +97,52 @@ suite "guildy":
 
       joinThread(gwThread)
 
+  test "manual reaction websocket":
+    if token != "":
+      initLock(stateLock)
+      receivedFromMonofuel = false
+
+      let restClient = newGuildyClient(token)
+      let dmChannelId = restClient.createDMChannel(MonofuelUserId)
+      check dmChannelId.len > 0
+      let posted = restClient.postChannelMessage(dmChannelId, "[guildy manual test] react to this message")
+      check posted.id.len > 0
+      let postedIdLocal = posted.id
+
+      var gwThread: Thread[(string, string, string)]
+      proc gwProc(args: (string, string, string)) {.thread, gcsafe.} =
+        let (tok, chFixed, msgIdFixed) = args
+        var lc = newGuildyClient(tok)
+        proc onMsg(c: GuildyClient, msg: DiscordMessage) {.gcsafe.} = discard
+        let chId = chFixed
+        let pid = msgIdFixed
+        proc onRaw(c: GuildyClient, e: JsonNode) {.gcsafe.} = discard
+        proc onReact(c: GuildyClient, ch: string, mid: string, em: DiscordEmoji, uid: string) {.gcsafe.} =
+          echo "received reaction: ", toJson(em)
+          if ch == chId and mid == pid and uid == MonofuelUserId:
+            acquire(stateLock)
+            receivedFromMonofuel = true
+            release(stateLock)
+            c.stop()
+        lc.startGateway(onRaw = onRaw, onMessage = onMsg, onReaction = onReact)
+      createThread[(string, string, string)](gwThread, gwProc, (token, dmChannelId, postedIdLocal))
+
+      var waited = 0
+      let timeoutMs = 2 * 60 * 1000
+      while true:
+        acquire(stateLock)
+        let got = receivedFromMonofuel
+        release(stateLock)
+        if got: break
+        if waited >= timeoutMs: break
+        sleep(200)
+        waited += 200
+
+      acquire(stateLock)
+      let gotReact = receivedFromMonofuel
+      release(stateLock)
+      check gotReact
+      joinThread(gwThread)
+
+  test "can receive reactions":
+    discard
