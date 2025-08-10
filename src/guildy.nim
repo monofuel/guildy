@@ -246,10 +246,7 @@ proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
         "status": "online",
         "since": nil,
         "activities": [
-          {
-            "name": "Guildy",
-            "type": 2
-          }
+          { "name": "Final Fantasy XIV", "type": 0 } 
         ],
         "afk": false
       }
@@ -276,7 +273,7 @@ proc handleEvent(
       "d": {
         "since": nil,
         "status": "online",
-        "activities": [ { "name": "Guildy", "type": 2 } ],
+        "activities": [ { "name": "Final Fantasy XIV", "type": 0 } ],
         "afk": false
       }
     }
