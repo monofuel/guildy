@@ -1,5 +1,5 @@
 import
-  std/[unittest, os, strutils, tables, times, locks, json],
+  std/[unittest, os, strutils, tables, times, locks, json, options],
   jsony, guildy
 
 # manual dm test
@@ -144,5 +144,50 @@ suite "guildy":
       check gotReact
       joinThread(gwThread)
 
-  test "can receive reactions":
-    discard
+  test "manual edit message test":
+    # test the user editing messages will show up on the gateway
+    
+    if token != "":
+      initLock(stateLock)
+      receivedFromMonofuel = false
+
+      let restClient = newGuildyClient(token)
+      let dmChannelId = restClient.createDMChannel(MonofuelUserId)
+      check dmChannelId.len > 0
+
+      let posted = restClient.postChannelMessage(dmChannelId, "[guildy manual test] reply then edit your reply within 2 minutes")
+      check posted.id.len > 0
+
+      var gwThread: Thread[(string, string)]
+      proc gwProc(args: (string, string)) {.thread, gcsafe.} =
+        let (tok, chFixed) = args
+        var lc = newGuildyClient(tok)
+        let chId = chFixed
+        proc onRaw(c: GuildyClient, e: JsonNode) {.gcsafe.} = discard
+        proc onReact(c: GuildyClient, ch: string, mid: string, em: DiscordEmoji, uid: string) {.gcsafe.} = discard
+        proc onMsg(c: GuildyClient, msg: DiscordMessage) {.gcsafe.} =
+          echo toJson(msg)
+          if msg.channel_id == chId and msg.author.id == MonofuelUserId and msg.edited_timestamp.isSome:
+            acquire(stateLock)
+            receivedFromMonofuel = true
+            release(stateLock)
+            c.stop()
+        lc.startGateway(onRaw = onRaw, onMessage = onMsg, onReaction = onReact)
+      createThread[(string, string)](gwThread, gwProc, (token, dmChannelId))
+
+      var waited = 0
+      let timeoutMs = 2 * 60 * 1000
+      while true:
+        acquire(stateLock)
+        let got = receivedFromMonofuel
+        release(stateLock)
+        if got: break
+        if waited >= timeoutMs: break
+        sleep(200)
+        waited += 200
+
+      acquire(stateLock)
+      let gotEdit = receivedFromMonofuel
+      release(stateLock)
+      check gotEdit
+      joinThread(gwThread)
