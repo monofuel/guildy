@@ -9,6 +9,11 @@ import
 # Types
 
 type
+  AvatarDecorationData* = ref object
+    asset*: string
+    sku_id*: string
+    expires_at*: int
+
   Author* = ref object
     id*: string
     username*: string
@@ -19,7 +24,7 @@ type
     banner*: Option[string]
     accent_color*: Option[string]
     global_name*: Option[string]
-    avatar_decoration_data*: Option[string]
+    avatar_decoration_data*: Option[AvatarDecorationData]
     banner_color*: Option[string]
 
   DiscordEmoji* = ref object
@@ -173,7 +178,12 @@ proc getChannelMessages*(
   before: string = ""
 ): seq[DiscordMessage] =
   let resp = c.disCall("GET", c.channelMessagesUri(channelID, limit, before))
-  result = fromJson(resp, seq[DiscordMessage])
+  try:
+    result = fromJson(resp, seq[DiscordMessage])
+  except Exception as e:
+    echo "Error parsing JSON: ", e.msg
+    echo resp
+    raise e
 
 proc postChannelMessage*(c: GuildyClient, channelID: string, content: string): DiscordMessage {.gcsafe.} =
   var text = content
