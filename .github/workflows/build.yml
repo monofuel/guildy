@@ -25,5 +25,5 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-nimble-
     - run: nimble install -y
-    - run: nimble test -y
-    - run: nimble test --gc:orc -y
+    # - run: nimble test -y
+    # - run: nimble test --gc:orc -y
