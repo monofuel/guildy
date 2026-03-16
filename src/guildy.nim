@@ -66,7 +66,7 @@ type
     timestamp*: string
     edited_timestamp*: Option[string]
     flags*: int
-    components*: seq[string]
+    components*: seq[JsonNode]
 
   GuildChannel* = ref object
     id*: string
