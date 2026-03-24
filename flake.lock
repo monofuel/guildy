@@ -1,5 +1,21 @@
 {
   "nodes": {
+    "libdave-src": {
+      "flake": false,
+      "locked": {
+        "lastModified": 1769732177,
+        "narHash": "sha256-ALDmtAjSkjnLDcmtpvcwiN7dPvpOgOTNFolr/H3SqsE=",
+        "owner": "discord",
+        "repo": "libdave",
+        "rev": "52cd56dc550f447fb354b3a06c9e2d2e2a4309c6",
+        "type": "github"
+      },
+      "original": {
+        "owner": "discord",
+        "repo": "libdave",
+        "type": "github"
+      }
+    },
     "nixpkgs": {
       "locked": {
         "lastModified": 1754689972,
@@ -18,6 +34,7 @@
     },
     "root": {
       "inputs": {
+        "libdave-src": "libdave-src",
         "nixpkgs": "nixpkgs"
       }
     }

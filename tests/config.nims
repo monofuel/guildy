@@ -1,2 +1,3 @@
 --path:"../src"
 --d:ssl
+--d:guildyVoice

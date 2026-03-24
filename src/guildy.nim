@@ -103,7 +103,10 @@ type
 
     # Voice
     voiceStates*: Table[string, VoiceState]
+    voiceConnections*: Table[string, VoiceConnection]
     onVoiceReady*: OnVoiceStateEvent
+    onVoiceConnected*: OnVoiceConnectedEvent
+    onVoiceMilestone*: OnVoiceMilestoneEvent
 
 const
   DefaultUserAgent = "Guildy Client"
@@ -136,6 +139,7 @@ proc newGuildyClient*(
     sessionId: "",
     sequence: 0,
     voiceStates: initTable[string, VoiceState](),
+    voiceConnections: initTable[string, VoiceConnection](),
   )
 
 
@@ -287,6 +291,9 @@ proc joinVoiceChannel*(c: GuildyClient, guildId: string, channelId: string,
 
 proc leaveVoiceChannel*(c: GuildyClient, guildId: string) {.async.} =
   ## Send gateway opcode 4 with null channel_id to leave voice.
+  if guildId in c.voiceConnections:
+    disconnectVoice(c.voiceConnections[guildId])
+    c.voiceConnections.del(guildId)
   c.voiceStates.del(guildId)
   let payload = %*{
     "op": 4,
@@ -309,6 +316,16 @@ proc createVoiceChannel*(c: GuildyClient, guildId: string, name: string,
   }
   let resp = c.disCall("POST", c.guildChannelsUri(guildId), toJson(body))
   result = fromJson(resp, GuildChannel)
+
+proc connectAndStoreVoice(c: GuildyClient, state: VoiceState) {.async.} =
+  ## Connect to the voice gateway and store the connection.
+  try:
+    let vc = await connectVoiceGateway(state, c.onVoiceMilestone)
+    c.voiceConnections[state.guildId] = vc
+    if c.onVoiceConnected != nil:
+      c.onVoiceConnected(vc)
+  except CatchableError as e:
+    echo "Voice gateway error: ", e.msg
 
 proc handleEvent(
   c: GuildyClient,
@@ -350,12 +367,16 @@ proc handleEvent(
   elif t == "VOICE_SERVER_UPDATE":
     let d = event["d"]
     let guildId = d["guild_id"].getStr
+    echo "VOICE_SERVER_UPDATE: ", $d
     if guildId in c.voiceStates:
       c.voiceStates[guildId].token = d["token"].getStr
       c.voiceStates[guildId].endpoint = d["endpoint"].getStr
       # Both voice events received — state is ready.
-      if c.voiceStates[guildId].sessionId.len > 0 and c.onVoiceReady != nil:
-        c.onVoiceReady(c.voiceStates[guildId])
+      if c.voiceStates[guildId].sessionId.len > 0:
+        if c.onVoiceReady != nil:
+          c.onVoiceReady(c.voiceStates[guildId])
+        # Automatically connect to voice gateway.
+        asyncCheck c.connectAndStoreVoice(c.voiceStates[guildId])
   elif t == "MESSAGE_REACTION_ADD":
     if onReaction != nil:
       let d = event["d"]
