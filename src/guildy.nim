@@ -2,8 +2,9 @@
 ## Minimal Discord client (REST + Gateway)
 
 import
-  std/[strformat, uri, json, options, times, os, strutils, asyncdispatch, random],
-  curly, ws, jsony
+  std/[strformat, uri, json, options, times, os, strutils, asyncdispatch, random, tables],
+  curly, ws, jsony,
+  guildy/voice
 
 # -------------------------------
 # Types
@@ -100,6 +101,10 @@ type
     sessionId*: string
     sequence*: int
 
+    # Voice
+    voiceStates*: Table[string, VoiceState]
+    onVoiceReady*: OnVoiceStateEvent
+
 const
   DefaultUserAgent = "Guildy Client"
   DefaultCurlTimeout: float32 = 60 * 3
@@ -130,6 +135,7 @@ proc newGuildyClient*(
     lastHeartbeat: 0.0,
     sessionId: "",
     sequence: 0,
+    voiceStates: initTable[string, VoiceState](),
   )
 
 
@@ -264,6 +270,46 @@ proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
   }
   await ws.send(toJson(payload))
 
+proc joinVoiceChannel*(c: GuildyClient, guildId: string, channelId: string,
+                        selfMute: bool = false, selfDeaf: bool = false) {.async.} =
+  ## Send gateway opcode 4 to join a voice channel.
+  c.voiceStates[guildId] = VoiceState(guildId: guildId, channelId: channelId)
+  let payload = %*{
+    "op": 4,
+    "d": {
+      "guild_id": guildId,
+      "channel_id": channelId,
+      "self_mute": selfMute,
+      "self_deaf": selfDeaf
+    }
+  }
+  await c.ws.send(toJson(payload))
+
+proc leaveVoiceChannel*(c: GuildyClient, guildId: string) {.async.} =
+  ## Send gateway opcode 4 with null channel_id to leave voice.
+  c.voiceStates.del(guildId)
+  let payload = %*{
+    "op": 4,
+    "d": {
+      "guild_id": guildId,
+      "channel_id": nil,
+      "self_mute": false,
+      "self_deaf": false
+    }
+  }
+  await c.ws.send(toJson(payload))
+
+proc createVoiceChannel*(c: GuildyClient, guildId: string, name: string,
+                          bitrate: int = 64000): GuildChannel =
+  ## Create a voice channel (type=2) in the given guild.
+  let body = %*{
+    "name": name,
+    "type": 2,
+    "bitrate": bitrate
+  }
+  let resp = c.disCall("POST", c.guildChannelsUri(guildId), toJson(body))
+  result = fromJson(resp, GuildChannel)
+
 proc handleEvent(
   c: GuildyClient,
   ws: ws.WebSocket,
@@ -294,8 +340,22 @@ proc handleEvent(
     if onMessage != nil:
       let msg = fromJson(event["d"].pretty, DiscordMessage)
       onMessage(c, msg)
-  elif t == "VOICE_STATE_UPDATE" or t == "VOICE_SERVER_UPDATE":
-    discard
+  elif t == "VOICE_STATE_UPDATE":
+    let d = event["d"]
+    let guildId = d["guild_id"].getStr
+    if guildId in c.voiceStates:
+      c.voiceStates[guildId].sessionId = d["session_id"].getStr
+      if d.hasKey("user_id"):
+        c.voiceStates[guildId].userId = d["user_id"].getStr
+  elif t == "VOICE_SERVER_UPDATE":
+    let d = event["d"]
+    let guildId = d["guild_id"].getStr
+    if guildId in c.voiceStates:
+      c.voiceStates[guildId].token = d["token"].getStr
+      c.voiceStates[guildId].endpoint = d["endpoint"].getStr
+      # Both voice events received — state is ready.
+      if c.voiceStates[guildId].sessionId.len > 0 and c.onVoiceReady != nil:
+        c.onVoiceReady(c.voiceStates[guildId])
   elif t == "MESSAGE_REACTION_ADD":
     if onReaction != nil:
       let d = event["d"]

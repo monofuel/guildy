@@ -1,4 +1,4 @@
-version     = "0.3.0"
+version     = "1.0.0"
 author      = "monofuel"
 description = "Guildy Discord API Client"
 license     = "MIT"
