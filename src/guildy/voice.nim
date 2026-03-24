@@ -331,9 +331,26 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
   of VoiceResumedOp:
     discard
   of VoiceClientDisconnectOp:
-    discard
-  of 11, 12, 14, 15, 18, 20:
-    # Known but unhandled opcodes (speaking updates, flags, etc.)
+    when defined(guildyVoice):
+      let d = event["d"]
+      if d.hasKey("user_id"):
+        let userId = d["user_id"].getStr
+        let idx = vc.recognizedUserIds.find(userId)
+        if idx >= 0:
+          vc.recognizedUserIds.delete(idx)
+          echo "DAVE: recognized user removed: ", userId
+  of 11:
+    # clients_connect: user IDs of users connected to the media session
+    when defined(guildyVoice):
+      let d = event["d"]
+      if d.hasKey("user_ids"):
+        for uid in d["user_ids"]:
+          let userId = uid.getStr
+          if userId notin vc.recognizedUserIds:
+            vc.recognizedUserIds.add(userId)
+            echo "DAVE: recognized user added: ", userId
+  of 12, 14, 15, 18, 20:
+    # Known but unhandled opcodes (flags, etc.)
     discard
   else:
     when defined(guildyVoice):
@@ -382,19 +399,28 @@ when defined(guildyVoice):
         await vc.sendMlsKeyPackage()
         vc.daveKeyPackageSent = true
     of DaveMlsProposalsOp:
-      echo "DAVE: Proposals binary len=", payload.len
-      let commitWelcome = processProposals(vc.daveSession, payload,
-          vc.getRecognizedUserIdsWithSelf())
-      if commitWelcome.len > 0:
-        await vc.sendMlsCommitWelcome(commitWelcome)
+      # Binary format: [1-byte operation_type][proposals data]
+      # operation_type: 0=append, 1=revoke
+      if payload.len < 1:
+        echo "DAVE: Proposals too short: ", payload.len
+        return
+      let opType = payload[0]
+      let proposalData = payload[1..^1]
+      echo "DAVE: Proposals binary op_type=", opType, " data_len=", proposalData.len
+      if opType == 0: # append
+        let commitWelcome = processProposals(vc.daveSession, proposalData,
+            vc.getRecognizedUserIdsWithSelf())
+        if commitWelcome.len > 0:
+          await vc.sendMlsCommitWelcome(commitWelcome)
+      else:
+        echo "DAVE: Proposals revoke not yet implemented"
     of DaveMlsPrepareCommitTransitionOp:
-      # Binary format: [4-byte big-endian transition_id][MLS commit data]
-      if payload.len < 4:
+      # Binary format: [2-byte big-endian transition_id][MLS commit data]
+      if payload.len < 2:
         echo "DAVE: PrepareCommitTransition too short: ", payload.len
         return
-      let transitionId = (int(payload[0]) shl 24) or (int(payload[1]) shl 16) or
-          (int(payload[2]) shl 8) or int(payload[3])
-      let commit = payload[4..^1]
+      let transitionId = (int(payload[0]) shl 8) or int(payload[1])
+      let commit = payload[2..^1]
       echo "DAVE: PrepareCommitTransition id=", transitionId, " commit_len=",
           commit.len
       let commitResult = processCommit(vc.daveSession, commit)
@@ -415,13 +441,12 @@ when defined(guildyVoice):
         vc.prepareDaveProtocolRatchets(transitionId, protoVer)
         await vc.sendReadyForTransition(transitionId)
     of DaveMlsWelcomeOp:
-      # Binary format: [4-byte big-endian transition_id][MLS welcome data]
-      if payload.len < 4:
+      # Binary format: [2-byte big-endian transition_id][MLS welcome data]
+      if payload.len < 2:
         echo "DAVE: Welcome too short: ", payload.len
         return
-      let transitionId = (int(payload[0]) shl 24) or (int(payload[1]) shl 16) or
-          (int(payload[2]) shl 8) or int(payload[3])
-      let welcome = payload[4..^1]
+      let transitionId = (int(payload[0]) shl 8) or int(payload[1])
+      let welcome = payload[2..^1]
       echo "DAVE: Welcome id=", transitionId, " welcome_len=", welcome.len
       let welcomeResult = processWelcome(vc.daveSession, welcome,
           vc.getRecognizedUserIdsWithSelf())
