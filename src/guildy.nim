@@ -22,6 +22,7 @@ type
     discriminator*: string
     public_flags*: int
     flags*: int
+    bot*: bool
     banner*: Option[string]
     accent_color*: Option[string]
     global_name*: Option[string]
@@ -69,6 +70,14 @@ type
     flags*: int
     components*: seq[JsonNode]
 
+  DiscordInteraction* = ref object
+    id*: string
+    token*: string
+    command_name*: string
+    channel_id*: string
+    user_id*: string
+    guild_id*: string
+
   GuildChannel* = ref object
     id*: string
     channel_type*: int # json field `type`
@@ -95,6 +104,7 @@ type
 
     # Gateway
     intents*: int
+    activityName*: string
     ws*: ws.WebSocket
     running*: bool
     lastHeartbeat*: float
@@ -111,18 +121,39 @@ type
 const
   DefaultUserAgent = "Guildy Client"
   DefaultCurlTimeout: float32 = 60 * 3
-  # Intents: VOICE_STATES(128) + GUILD_MESSAGES(512) + GUILD_MESSAGE_REACTIONS(1024)
-  #          + DIRECT_MESSAGES(4096) + DIRECT_MESSAGE_REACTIONS(8192)
-  DefaultIntents = 13952
   DefaultCacheDir = "/tmp/guildy_cache/"
+  MaxRateLimitRetries = 3
+
+  # Discord gateway intent bit flags
+  IntentGuilds* = 1 shl 0
+  IntentGuildMembers* = 1 shl 1
+  IntentGuildModeration* = 1 shl 2
+  IntentGuildEmojisAndStickers* = 1 shl 3
+  IntentGuildIntegrations* = 1 shl 4
+  IntentGuildWebhooks* = 1 shl 5
+  IntentGuildInvites* = 1 shl 6
+  IntentGuildVoiceStates* = 1 shl 7
+  IntentGuildPresences* = 1 shl 8
+  IntentGuildMessages* = 1 shl 9
+  IntentGuildMessageReactions* = 1 shl 10
+  IntentGuildMessageTyping* = 1 shl 11
+  IntentDirectMessages* = 1 shl 12
+  IntentDirectMessageReactions* = 1 shl 13
+  IntentDirectMessageTyping* = 1 shl 14
+  IntentMessageContent* = 1 shl 15
+
+  DefaultIntents* = IntentGuildVoiceStates or IntentGuildMessages or
+    IntentGuildMessageReactions or IntentDirectMessages or
+    IntentDirectMessageReactions or IntentMessageContent
 
 proc newGuildyClient*(
   token: string,
   curlPoolSize: int = 16,
   userAgent: string = DefaultUserAgent,
-  apiBase: string = "https://discord.com/api/v9",
+  apiBase: string = "https://discord.com/api/v10",
   intents: int = DefaultIntents,
-  curlTimeoutSec: float32 = DefaultCurlTimeout
+  curlTimeoutSec: float32 = DefaultCurlTimeout,
+  activityName: string = "Final Fantasy XIV"
 ): GuildyClient =
   if token.len == 0:
     raise newException(GuildyError, "Missing Discord bot token")
@@ -134,6 +165,7 @@ proc newGuildyClient*(
     curlPool: newCurlPool(curlPoolSize),
     curlTimeoutSec: curlTimeoutSec,
     intents: intents,
+    activityName: activityName,
     running: true,
     lastHeartbeat: 0.0,
     sessionId: "",
@@ -164,18 +196,34 @@ proc channelMessagesUri(
   result = result ? params
 
 proc disCall(c: GuildyClient, verb: string, uri: Uri, body: string = ""): string {.gcsafe.} =
+  ## Make an authenticated REST call to the Discord API with rate limit retry.
   var headers: curly.HttpHeaders
   headers["Authorization"] = &"Bot {c.token}"
   headers["User-Agent"] = c.userAgent
   headers["Content-Type"] = "application/json"
 
-  let curl = c.curlPool.borrow()
-  let resp = curl.makeRequest(verb, $uri, headers, body, c.curlTimeoutSec)
-  c.curlPool.recycle(curl)
+  for attempt in 0 ..< MaxRateLimitRetries:
+    let curl = c.curlPool.borrow()
+    let resp = curl.makeRequest(verb, $uri, headers, body, c.curlTimeoutSec)
+    c.curlPool.recycle(curl)
 
-  if resp.code != 200 and resp.code != 204:
+    if resp.code == 200 or resp.code == 204:
+      return resp.body
+
+    if resp.code == 429:
+      # Rate limited — sleep for the duration Discord tells us
+      let retryAfter = resp.headers["Retry-After"]
+      let sleepMs = if retryAfter.len > 0:
+        (parseFloat(retryAfter) * 1000).int
+      else:
+        1000 * (attempt + 1)
+      echo &"Rate limited on {verb} {uri}, retrying after {sleepMs}ms (attempt {attempt + 1}/{MaxRateLimitRetries})"
+      sleep(sleepMs)
+      continue
+
     raise newException(GuildyError, &"discord error: {resp.code} {resp.body}")
-  result = resp.body
+
+  raise newException(GuildyError, &"rate limited after {MaxRateLimitRetries} retries on {verb} {uri}")
 
 proc getGuildChannels*(c: GuildyClient, guildID: string): seq[GuildChannel] =
   let resp = c.disCall("GET", c.guildChannelsUri(guildID))
@@ -197,10 +245,10 @@ proc getChannelMessages*(
 
 proc postChannelMessage*(c: GuildyClient, channelID: string, content: string): DiscordMessage {.gcsafe.} =
   var text = content
-  if text.len > 1900:
-    text = text[0..1900]
+  if text.len > 2000:
+    text = text[0 ..< 2000]
   let body = %*{ "content": text }
-  let resp = c.disCall("POST", c.channelMessagesUri(channelID, 1), toJson(body))
+  let resp = c.disCall("POST", c.apiBase / "/channels/" / channelID / "/messages", toJson(body))
   result = fromJson(resp, DiscordMessage)
 
 proc deleteChannelMessage*(c: GuildyClient, channelID: string, messageID: string) =
@@ -228,6 +276,7 @@ type
   OnRawEvent* = proc(c: GuildyClient, event: JsonNode) {.gcsafe.}
   OnMessageEvent* = proc(c: GuildyClient, msg: DiscordMessage) {.gcsafe.}
   OnReactionEvent* = proc(c: GuildyClient, channelId: string, messageId: string, emoji: DiscordEmoji, userId: string) {.gcsafe.}
+  OnInteractionEvent* = proc(c: GuildyClient, interaction: DiscordInteraction) {.gcsafe.}
 
 proc stop*(c: GuildyClient) =
   c.running = false
@@ -266,7 +315,7 @@ proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
         "status": "online",
         "since": nil,
         "activities": [
-          { "name": "Final Fantasy XIV", "type": 0 } 
+          { "name": c.activityName, "type": 0 }
         ],
         "afk": false
       }
@@ -333,7 +382,8 @@ proc handleEvent(
   event: JsonNode,
   onRaw: OnRawEvent,
   onMessage: OnMessageEvent,
-  onReaction: OnReactionEvent
+  onReaction: OnReactionEvent,
+  onInteraction: OnInteractionEvent
 ) {.async.} =
   if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
     c.sequence = event["s"].getInt
@@ -346,7 +396,7 @@ proc handleEvent(
       "d": {
         "since": nil,
         "status": "online",
-        "activities": [ { "name": "Final Fantasy XIV", "type": 0 } ],
+        "activities": [ { "name": c.activityName, "type": 0 } ],
         "afk": false
       }
     }
@@ -355,7 +405,7 @@ proc handleEvent(
     discard
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
     if onMessage != nil:
-      let msg = fromJson(event["d"].pretty, DiscordMessage)
+      let msg = fromJson($event["d"], DiscordMessage)
       onMessage(c, msg)
   elif t == "VOICE_STATE_UPDATE":
     let d = event["d"]
@@ -389,6 +439,22 @@ proc handleEvent(
       let messageId = d["message_id"].getStr
       let userId = d["user_id"].getStr
       onReaction(c, channelId, messageId, em, userId)
+  elif t == "INTERACTION_CREATE":
+    if onInteraction != nil:
+      let d = event["d"]
+      var interaction = DiscordInteraction()
+      interaction.id = d["id"].getStr
+      interaction.token = d["token"].getStr
+      interaction.channel_id = d{"channel_id"}.getStr
+      interaction.guild_id = d{"guild_id"}.getStr
+      if d.hasKey("data") and d["data"].hasKey("name"):
+        interaction.command_name = d["data"]["name"].getStr
+      # user_id: guild context has member.user.id, DM context has user.id
+      if d.hasKey("member") and d["member"].hasKey("user"):
+        interaction.user_id = d["member"]["user"]["id"].getStr
+      elif d.hasKey("user"):
+        interaction.user_id = d["user"]["id"].getStr
+      onInteraction(c, interaction)
 
   if event.hasKey("op"):
     let op = event["op"].getInt
@@ -415,16 +481,17 @@ proc eventLoop(
   ws: ws.WebSocket,
   onRaw: OnRawEvent,
   onMessage: OnMessageEvent,
-  onReaction: OnReactionEvent
+  onReaction: OnReactionEvent,
+  onInteraction: OnInteractionEvent
 ) {.async.} =
   while ws.readyState == ReadyState.Open and c.running:
     let packet = await ws.receiveStrPacket()
     let event = parseJson(packet)
-    await c.handleEvent(ws, event, onRaw, onMessage, onReaction)
+    await c.handleEvent(ws, event, onRaw, onMessage, onReaction, onInteraction)
 
-proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent, onReaction: OnReactionEvent) {.async.} =
+proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent, onReaction: OnReactionEvent, onInteraction: OnInteractionEvent) {.async.} =
   echo "Connecting to Discord Gateway"
-  let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=9&encoding=json")
+  let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=10&encoding=json")
   c.ws = wsClient
   echo "Gateway connected"
   # Receive Hello, start heartbeat
@@ -440,7 +507,7 @@ proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessag
   else:
     await c.identifySession(wsClient)
 
-  await c.eventLoop(wsClient, onRaw, onMessage, onReaction)
+  await c.eventLoop(wsClient, onRaw, onMessage, onReaction, onInteraction)
   # ensure close when loop exits
   try: wsClient.close() except: discard
 
@@ -448,12 +515,13 @@ proc startGateway*(
   c: GuildyClient,
   onRaw: OnRawEvent = nil,
   onMessage: OnMessageEvent = nil,
-  onReaction: OnReactionEvent = nil
+  onReaction: OnReactionEvent = nil,
+  onInteraction: OnInteractionEvent = nil
 ) =
   ## Blocking loop that maintains a gateway connection and auto-reconnects.
   while c.running:
     try:
-      waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage, onReaction)
+      waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage, onReaction, onInteraction)
     except WebSocketClosedError:
       echo "WebSocket closed; will reconnect"
       if c.running:
