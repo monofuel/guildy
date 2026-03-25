@@ -194,15 +194,6 @@ type
     session_id*: string
     seq*: int
 
-  PresenceActivity = ref object
-    name*: string
-    `type`*: int
-
-  PresenceData = ref object
-    status*: string
-    activities*: seq[PresenceActivity]
-    afk*: bool
-
   VoiceStateData = ref object
     guild_id*: string
     channel_id*: Option[string]
@@ -484,12 +475,15 @@ proc resumeSession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
 
 proc sendPresenceUpdate(c: GuildyClient, ws: ws.WebSocket) {.async.} =
   ## Send a presence update (opcode 3).
-  let data = PresenceData(
-    status: "online",
-    activities: @[PresenceActivity(name: c.activityName, `type`: 0)],
-    afk: false
-  )
-  await ws.sendGatewayOp(3, toJson(data))
+  # Uses %* because Discord requires "since": null which jsony's Option[int]
+  # would omit entirely instead of serializing as null.
+  let payload = %*{
+    "since": nil,
+    "status": "online",
+    "activities": [{"name": c.activityName, "type": 0}],
+    "afk": false
+  }
+  await ws.sendGatewayOp(3, toJson(payload))
 
 proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
   ## Send identify payload (opcode 2).
@@ -575,7 +569,6 @@ proc handleEvent(
     c.sessionId = ready.session_id
     if ready.application != nil:
       c.appId = ready.application.id
-    await c.sendPresenceUpdate(ws)
   elif t == "RESUMED":
     discard
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
