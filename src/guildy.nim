@@ -7,7 +7,7 @@ import
   guildy/voice
 
 # -------------------------------
-# Types
+# Types — Discord API objects
 
 type
   AvatarDecorationData* = ref object
@@ -54,7 +54,7 @@ type
 
   DiscordMessage* = ref object
     id*: string
-    ttype*: int
+    `type`*: int
     content*: string
     channel_id*: string
     author*: Author
@@ -70,7 +70,39 @@ type
     flags*: int
     components*: seq[JsonNode]
 
+  GuildChannel* = ref object
+    id*: string
+    `type`*: int
+    name*: Option[string]
+
+# -------------------------------
+# Types — Interaction (inbound from gateway, exposed to consumers)
+
+type
+  InteractionUser* = ref object
+    ## Discord user object (subset of fields used in interactions).
+    id*: string
+
+  InteractionMember* = ref object
+    ## Guild member wrapper containing the user object.
+    user*: InteractionUser
+
+  InteractionCommandData* = ref object
+    ## The data payload of a slash command interaction.
+    name*: string
+
+  InteractionEvent* = ref object
+    ## Raw INTERACTION_CREATE event payload from Discord.
+    id*: string
+    token*: string
+    channel_id*: string
+    guild_id*: string
+    data*: InteractionCommandData
+    member*: InteractionMember
+    user*: InteractionUser
+
   DiscordInteraction* = ref object
+    ## Parsed interaction delivered to consumer callbacks.
     id*: string
     token*: string
     command_name*: string
@@ -78,15 +110,104 @@ type
     user_id*: string
     guild_id*: string
 
-  GuildChannel* = ref object
+# -------------------------------
+# Types — Gateway inbound events (internal, for jsony deserialization)
+
+type
+  ReadyApplication = ref object
     id*: string
-    channel_type*: int # json field `type`
-    name*: Option[string]
 
-proc renameHook*(v: var GuildChannel, fieldName: var string) =
-  if fieldName == "type":
-    fieldName = "channel_type"
+  ReadyEvent = ref object
+    session_id*: string
+    application*: ReadyApplication
 
+  HelloEvent = ref object
+    heartbeat_interval*: float
+
+  ReactionEvent = ref object
+    channel_id*: string
+    message_id*: string
+    user_id*: string
+    emoji*: DiscordEmoji
+
+  VoiceStateUpdateEvent = ref object
+    guild_id*: string
+    session_id*: string
+    user_id*: string
+
+  VoiceServerUpdateEvent = ref object
+    guild_id*: string
+    token*: string
+    endpoint*: string
+
+# -------------------------------
+# Types — Outbound REST bodies (internal, for jsony serialization)
+
+type
+  MessagePost = ref object
+    ## Body for POST /channels/{id}/messages.
+    content*: string
+
+  DmChannelPost = ref object
+    ## Body for POST /users/@me/channels.
+    recipient_id*: string
+
+  CreateChannelPost = ref object
+    ## Body for POST /guilds/{id}/channels.
+    name*: string
+    `type`*: int
+    bitrate*: int
+
+  InteractionResponseData = ref object
+    ## Inner data for interaction callback response.
+    content*: string
+
+  InteractionResponse = ref object
+    ## Body for POST /interactions/{id}/{token}/callback.
+    `type`*: int
+    data*: InteractionResponseData
+
+# -------------------------------
+# Types — Slash command registration
+
+type
+  SlashCommandOption* = ref object
+    ## An option for a slash command (e.g. a required string argument).
+    name*: string
+    description*: string
+    `type`*: int
+    required*: bool
+
+  SlashCommand* = ref object
+    ## A slash command definition for registration via PUT.
+    name*: string
+    description*: string
+    `type`*: int
+    options*: seq[SlashCommandOption]
+
+# -------------------------------
+# Types — Outbound gateway payloads (internal)
+
+type
+  ResumeData = ref object
+    token*: string
+    session_id*: string
+    seq*: int
+
+  PresenceActivity = ref object
+    name*: string
+    `type`*: int
+
+  PresenceData = ref object
+    status*: string
+    activities*: seq[PresenceActivity]
+    afk*: bool
+
+  VoiceStateData = ref object
+    guild_id*: string
+    channel_id*: Option[string]
+    self_mute*: bool
+    self_deaf*: bool
 
 # -------------------------------
 # Client
@@ -101,6 +222,7 @@ type
     apiBase*: Uri
     curlPool*: CurlPool
     curlTimeoutSec*: float32
+    appId*: string
 
     # Gateway
     intents*: int
@@ -155,6 +277,7 @@ proc newGuildyClient*(
   curlTimeoutSec: float32 = DefaultCurlTimeout,
   activityName: string = "Final Fantasy XIV"
 ): GuildyClient =
+  ## Create a new Guildy Discord client.
   if token.len == 0:
     raise newException(GuildyError, "Missing Discord bot token")
   randomize()
@@ -179,6 +302,7 @@ proc newGuildyClient*(
 # REST helpers
 
 proc guildChannelsUri(c: GuildyClient, guildID: string): Uri =
+  ## URI for guild channel operations.
   result = c.apiBase / "/guilds/" / guildID / "/channels"
 
 proc channelMessagesUri(
@@ -187,6 +311,7 @@ proc channelMessagesUri(
   limit: int,
   before: string = ""
 ): Uri =
+  ## URI for fetching channel messages with query params.
   if limit <= 0:
     raise newException(GuildyError, "limit must be > 0")
   result = c.apiBase / "/channels/" / channelID / "/messages"
@@ -194,6 +319,17 @@ proc channelMessagesUri(
   if before != "":
     params.add(("before", before))
   result = result ? params
+
+proc applicationCommandsUri(c: GuildyClient, guildId: string = ""): Uri =
+  ## URI for bulk-overwriting application commands.
+  if guildId.len > 0:
+    result = c.apiBase / "/applications" / c.appId / "guilds" / guildId / "commands"
+  else:
+    result = c.apiBase / "/applications" / c.appId / "commands"
+
+proc interactionCallbackUri(c: GuildyClient, interactionId, token: string): Uri =
+  ## URI for responding to an interaction.
+  result = c.apiBase / "/interactions" / interactionId / token / "callback"
 
 proc disCall(c: GuildyClient, verb: string, uri: Uri, body: string = ""): string {.gcsafe.} =
   ## Make an authenticated REST call to the Discord API with rate limit retry.
@@ -226,6 +362,7 @@ proc disCall(c: GuildyClient, verb: string, uri: Uri, body: string = ""): string
   raise newException(GuildyError, &"rate limited after {MaxRateLimitRetries} retries on {verb} {uri}")
 
 proc getGuildChannels*(c: GuildyClient, guildID: string): seq[GuildChannel] =
+  ## Fetch the list of channels in a guild.
   let resp = c.disCall("GET", c.guildChannelsUri(guildID))
   result = fromJson(resp, seq[GuildChannel])
 
@@ -235,23 +372,21 @@ proc getChannelMessages*(
   limit: int = 50,
   before: string = ""
 ): seq[DiscordMessage] =
+  ## Fetch recent messages from a channel.
   let resp = c.disCall("GET", c.channelMessagesUri(channelID, limit, before))
-  try:
-    result = fromJson(resp, seq[DiscordMessage])
-  except Exception as e:
-    echo "Error parsing JSON: ", e.msg
-    echo resp
-    raise e
+  result = fromJson(resp, seq[DiscordMessage])
 
 proc postChannelMessage*(c: GuildyClient, channelID: string, content: string): DiscordMessage {.gcsafe.} =
+  ## Post a text message to a channel.
   var text = content
   if text.len > 2000:
     text = text[0 ..< 2000]
-  let body = %*{ "content": text }
-  let resp = c.disCall("POST", c.apiBase / "/channels/" / channelID / "/messages", toJson(body))
+  let resp = c.disCall("POST", c.apiBase / "/channels/" / channelID / "/messages",
+    toJson(MessagePost(content: text)))
   result = fromJson(resp, DiscordMessage)
 
 proc deleteChannelMessage*(c: GuildyClient, channelID: string, messageID: string) =
+  ## Delete a message from a channel.
   discard c.disCall("DELETE", c.apiBase / "/channels/" / channelID / "/messages/" / messageID)
 
 proc getDiscordAttachment*(c: GuildyClient, attachment: DiscordAttachment, cacheDir: string = DefaultCacheDir): string =
@@ -270,6 +405,45 @@ proc getDiscordAttachment*(c: GuildyClient, attachment: DiscordAttachment, cache
 
 
 # -------------------------------
+# Slash commands
+
+proc registerCommands*(c: GuildyClient, commands: string, guildId: string = ""): string =
+  ## Bulk overwrite slash commands. commands is a jsony JSON string of command definitions.
+  ## guildId = "" for global commands (slow propagation), or a guild ID for instant guild commands.
+  result = c.disCall("PUT", c.applicationCommandsUri(guildId), commands)
+
+proc respondToInteraction*(c: GuildyClient, interactionId, token: string,
+                            responseType: int, content: string = "") =
+  ## Respond to a slash command interaction.
+  ## responseType 4 = immediate reply, 5 = deferred (ack, edit later).
+  let body = InteractionResponse(
+    `type`: responseType,
+    data: InteractionResponseData(content: content)
+  )
+  discard c.disCall("POST", c.interactionCallbackUri(interactionId, token), toJson(body))
+
+proc editInteractionResponse*(c: GuildyClient, token: string, content: string) =
+  ## Edit the original interaction response (used after deferring with type 5).
+  let uri = c.apiBase / "/webhooks" / c.appId / token / "messages" / "@original"
+  discard c.disCall("PATCH", uri, toJson(MessagePost(content: content)))
+
+
+# -------------------------------
+# DMs
+
+type
+  DmChannelResp = ref object
+    id*: string
+
+proc createDMChannel*(c: GuildyClient, recipientId: string): string =
+  ## Create a DM channel with the given user and return the channel id.
+  let resp = c.disCall("POST", c.apiBase / "/users/@me/channels",
+    toJson(DmChannelPost(recipient_id: recipientId)))
+  let parsed = fromJson(resp, DmChannelResp)
+  result = parsed.id
+
+
+# -------------------------------
 # Gateway (WebSocket)
 
 type
@@ -279,32 +453,48 @@ type
   OnInteractionEvent* = proc(c: GuildyClient, interaction: DiscordInteraction) {.gcsafe.}
 
 proc stop*(c: GuildyClient) =
+  ## Stop the gateway connection.
   c.running = false
   if c.ws != nil:
     try: c.ws.close() except: discard
 
+proc sendGatewayOp(ws: ws.WebSocket, op: int, d: string) {.async.} =
+  ## Send a gateway opcode with a pre-serialized JSON payload for d.
+  await ws.send("{\"op\":" & $op & ",\"d\":" & d & "}")
+
 proc sendHeartbeat(c: GuildyClient, ws: ws.WebSocket) {.async.} =
-  let payload = %*{ "op": 1, "d": c.sequence }
-  await ws.send(toJson(payload))
+  ## Send a heartbeat (opcode 1) with the current sequence number.
+  await ws.sendGatewayOp(1, $c.sequence)
 
 proc heartbeat(c: GuildyClient, ws: ws.WebSocket, intervalMs: float, jitter: float) {.async.} =
+  ## Background heartbeat loop with jitter.
   while ws.readyState == ReadyState.Open and c.running:
     let actualInterval = (intervalMs + rand(intervalMs * jitter)).int
     await sleepAsync(actualInterval)
     await c.sendHeartbeat(ws)
 
 proc resumeSession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
-  let payload = %*{
-    "op": 6,
-    "d": {
-      "token": c.token,
-      "session_id": c.sessionId,
-      "seq": c.sequence
-    }
-  }
-  await ws.send(toJson(payload))
+  ## Resume a previous gateway session after reconnect.
+  let data = ResumeData(
+    token: c.token,
+    session_id: c.sessionId,
+    seq: c.sequence
+  )
+  await ws.sendGatewayOp(6, toJson(data))
+
+proc sendPresenceUpdate(c: GuildyClient, ws: ws.WebSocket) {.async.} =
+  ## Send a presence update (opcode 3).
+  let data = PresenceData(
+    status: "online",
+    activities: @[PresenceActivity(name: c.activityName, `type`: 0)],
+    afk: false
+  )
+  await ws.sendGatewayOp(3, toJson(data))
 
 proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
+  ## Send identify payload (opcode 2).
+  # Uses %* for the properties sub-object because Discord requires $-prefixed keys
+  # ($os, $browser, $device) which cannot be Nim field names.
   let payload = %*{
     "op": 2,
     "d": {
@@ -327,16 +517,13 @@ proc joinVoiceChannel*(c: GuildyClient, guildId: string, channelId: string,
                         selfMute: bool = false, selfDeaf: bool = false) {.async.} =
   ## Send gateway opcode 4 to join a voice channel.
   c.voiceStates[guildId] = VoiceState(guildId: guildId, channelId: channelId)
-  let payload = %*{
-    "op": 4,
-    "d": {
-      "guild_id": guildId,
-      "channel_id": channelId,
-      "self_mute": selfMute,
-      "self_deaf": selfDeaf
-    }
-  }
-  await c.ws.send(toJson(payload))
+  let data = VoiceStateData(
+    guild_id: guildId,
+    channel_id: some(channelId),
+    self_mute: selfMute,
+    self_deaf: selfDeaf
+  )
+  await c.ws.sendGatewayOp(4, toJson(data))
 
 proc leaveVoiceChannel*(c: GuildyClient, guildId: string) {.async.} =
   ## Send gateway opcode 4 with null channel_id to leave voice.
@@ -344,25 +531,18 @@ proc leaveVoiceChannel*(c: GuildyClient, guildId: string) {.async.} =
     disconnectVoice(c.voiceConnections[guildId])
     c.voiceConnections.del(guildId)
   c.voiceStates.del(guildId)
-  let payload = %*{
-    "op": 4,
-    "d": {
-      "guild_id": guildId,
-      "channel_id": nil,
-      "self_mute": false,
-      "self_deaf": false
-    }
-  }
-  await c.ws.send(toJson(payload))
+  let data = VoiceStateData(
+    guild_id: guildId,
+    channel_id: none(string),
+    self_mute: false,
+    self_deaf: false
+  )
+  await c.ws.sendGatewayOp(4, toJson(data))
 
 proc createVoiceChannel*(c: GuildyClient, guildId: string, name: string,
                           bitrate: int = 64000): GuildChannel =
   ## Create a voice channel (type=2) in the given guild.
-  let body = %*{
-    "name": name,
-    "type": 2,
-    "bitrate": bitrate
-  }
+  let body = CreateChannelPost(name: name, `type`: 2, bitrate: bitrate)
   let resp = c.disCall("POST", c.guildChannelsUri(guildId), toJson(body))
   result = fromJson(resp, GuildChannel)
 
@@ -385,22 +565,17 @@ proc handleEvent(
   onReaction: OnReactionEvent,
   onInteraction: OnInteractionEvent
 ) {.async.} =
+  ## Dispatch a gateway event to the appropriate handler.
   if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
     c.sequence = event["s"].getInt
 
   let t = if event.hasKey("t"): event["t"].getStr else: ""
   if t == "READY":
-    c.sessionId = event["d"]["session_id"].getStr
-    let presenceUpdate = %*{
-      "op": 3,
-      "d": {
-        "since": nil,
-        "status": "online",
-        "activities": [ { "name": c.activityName, "type": 0 } ],
-        "afk": false
-      }
-    }
-    await ws.send(toJson(presenceUpdate))
+    let ready = fromJson($event["d"], ReadyEvent)
+    c.sessionId = ready.session_id
+    if ready.application != nil:
+      c.appId = ready.application.id
+    await c.sendPresenceUpdate(ws)
   elif t == "RESUMED":
     discard
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
@@ -408,52 +583,41 @@ proc handleEvent(
       let msg = fromJson($event["d"], DiscordMessage)
       onMessage(c, msg)
   elif t == "VOICE_STATE_UPDATE":
-    let d = event["d"]
-    let guildId = d["guild_id"].getStr
-    if guildId in c.voiceStates:
-      c.voiceStates[guildId].sessionId = d["session_id"].getStr
-      if d.hasKey("user_id"):
-        c.voiceStates[guildId].userId = d["user_id"].getStr
+    let vs = fromJson($event["d"], VoiceStateUpdateEvent)
+    if vs.guild_id in c.voiceStates:
+      c.voiceStates[vs.guild_id].sessionId = vs.session_id
+      if vs.user_id.len > 0:
+        c.voiceStates[vs.guild_id].userId = vs.user_id
   elif t == "VOICE_SERVER_UPDATE":
-    let d = event["d"]
-    let guildId = d["guild_id"].getStr
-    echo "VOICE_SERVER_UPDATE: ", $d
-    if guildId in c.voiceStates:
-      c.voiceStates[guildId].token = d["token"].getStr
-      c.voiceStates[guildId].endpoint = d["endpoint"].getStr
+    let vs = fromJson($event["d"], VoiceServerUpdateEvent)
+    echo "VOICE_SERVER_UPDATE: ", $event["d"]
+    if vs.guild_id in c.voiceStates:
+      c.voiceStates[vs.guild_id].token = vs.token
+      c.voiceStates[vs.guild_id].endpoint = vs.endpoint
       # Both voice events received — state is ready.
-      if c.voiceStates[guildId].sessionId.len > 0:
+      if c.voiceStates[vs.guild_id].sessionId.len > 0:
         if c.onVoiceReady != nil:
-          c.onVoiceReady(c.voiceStates[guildId])
+          c.onVoiceReady(c.voiceStates[vs.guild_id])
         # Automatically connect to voice gateway.
-        asyncCheck c.connectAndStoreVoice(c.voiceStates[guildId])
+        asyncCheck c.connectAndStoreVoice(c.voiceStates[vs.guild_id])
   elif t == "MESSAGE_REACTION_ADD":
     if onReaction != nil:
-      let d = event["d"]
-      var em = DiscordEmoji(id: "", name: "", animated: false)
-      if d.hasKey("emoji"):
-        if d["emoji"].hasKey("id"): em.id = d["emoji"]["id"].getStr
-        if d["emoji"].hasKey("name"): em.name = d["emoji"]["name"].getStr
-        if d["emoji"].hasKey("animated"): em.animated = d["emoji"]["animated"].getBool
-      let channelId = d["channel_id"].getStr
-      let messageId = d["message_id"].getStr
-      let userId = d["user_id"].getStr
-      onReaction(c, channelId, messageId, em, userId)
+      let re = fromJson($event["d"], ReactionEvent)
+      onReaction(c, re.channel_id, re.message_id, re.emoji, re.user_id)
   elif t == "INTERACTION_CREATE":
     if onInteraction != nil:
-      let d = event["d"]
+      let ie = fromJson($event["d"], InteractionEvent)
       var interaction = DiscordInteraction()
-      interaction.id = d["id"].getStr
-      interaction.token = d["token"].getStr
-      interaction.channel_id = d{"channel_id"}.getStr
-      interaction.guild_id = d{"guild_id"}.getStr
-      if d.hasKey("data") and d["data"].hasKey("name"):
-        interaction.command_name = d["data"]["name"].getStr
-      # user_id: guild context has member.user.id, DM context has user.id
-      if d.hasKey("member") and d["member"].hasKey("user"):
-        interaction.user_id = d["member"]["user"]["id"].getStr
-      elif d.hasKey("user"):
-        interaction.user_id = d["user"]["id"].getStr
+      interaction.id = ie.id
+      interaction.token = ie.token
+      interaction.channel_id = ie.channel_id
+      interaction.guild_id = ie.guild_id
+      if ie.data != nil:
+        interaction.command_name = ie.data.name
+      if ie.member != nil and ie.member.user != nil:
+        interaction.user_id = ie.member.user.id
+      elif ie.user != nil:
+        interaction.user_id = ie.user.id
       onInteraction(c, interaction)
 
   if event.hasKey("op"):
@@ -484,23 +648,24 @@ proc eventLoop(
   onReaction: OnReactionEvent,
   onInteraction: OnInteractionEvent
 ) {.async.} =
+  ## Main event receive loop.
   while ws.readyState == ReadyState.Open and c.running:
     let packet = await ws.receiveStrPacket()
     let event = parseJson(packet)
     await c.handleEvent(ws, event, onRaw, onMessage, onReaction, onInteraction)
 
 proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent, onReaction: OnReactionEvent, onInteraction: OnInteractionEvent) {.async.} =
+  ## Establish a gateway connection, authenticate, and run the event loop.
   echo "Connecting to Discord Gateway"
   let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=10&encoding=json")
   c.ws = wsClient
   echo "Gateway connected"
   # Receive Hello, start heartbeat
   let helloPacket = await wsClient.receiveStrPacket()
-  let helloData = parseJson(helloPacket)["d"]
-  echo "Hello received; heartbeat_interval=", helloData["heartbeat_interval"].getFloat
-  let heartbeatIntervalMs = helloData["heartbeat_interval"].getFloat
+  let hello = fromJson($parseJson(helloPacket)["d"], HelloEvent)
+  echo "Hello received; heartbeat_interval=", hello.heartbeat_interval
   let jitter = 0.1
-  asyncCheck c.heartbeat(wsClient, heartbeatIntervalMs, jitter)
+  asyncCheck c.heartbeat(wsClient, hello.heartbeat_interval, jitter)
 
   if resume and c.sessionId.len > 0:
     await c.resumeSession(wsClient)
@@ -533,18 +698,3 @@ proc startGateway*(
       echo "Gateway error: ", e.msg
       if c.running:
         sleep(3000)
-
-# -------------------------------
-# DMs
-
-type
-  DmChannelResp = ref object
-    id*: string
-
-proc createDMChannel*(c: GuildyClient, recipientId: string): string =
-  ## Create a DM channel with the given user and return the channel id.
-  let body = %*{ "recipient_id": recipientId }
-  let resp = c.disCall("POST", c.apiBase / "/users/@me/channels", toJson(body))
-  let parsed = fromJson(resp, DmChannelResp)
-  result = parsed.id
-
