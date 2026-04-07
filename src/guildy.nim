@@ -258,6 +258,11 @@ proc dumpHook*(s: var string, v: PresenceData) =
 # Client
 
 type
+  OnRawEvent* = proc(c: GuildyClient, event: JsonNode) {.gcsafe.}
+  OnMessageEvent* = proc(c: GuildyClient, msg: DiscordMessage) {.gcsafe.}
+  OnReactionEvent* = proc(c: GuildyClient, channelId: string, messageId: string, emoji: DiscordEmoji, userId: string) {.gcsafe.}
+  OnInteractionEvent* = proc(c: GuildyClient, interaction: DiscordInteraction) {.gcsafe.}
+
   GuildyError* = object of CatchableError
     code*: int
     body*: string
@@ -279,6 +284,12 @@ type
     lastHeartbeat*: float
     sessionId*: string
     sequence*: int
+
+    # Event callbacks
+    onRaw*: OnRawEvent
+    onMessage*: OnMessageEvent
+    onReaction*: OnReactionEvent
+    onInteraction*: OnInteractionEvent
 
     # Voice
     voiceStates*: Table[string, VoiceState]
@@ -513,12 +524,6 @@ proc createDMChannel*(c: GuildyClient, recipientId: string): string =
 # -------------------------------
 # Gateway (WebSocket)
 
-type
-  OnRawEvent* = proc(c: GuildyClient, event: JsonNode) {.gcsafe.}
-  OnMessageEvent* = proc(c: GuildyClient, msg: DiscordMessage) {.gcsafe.}
-  OnReactionEvent* = proc(c: GuildyClient, channelId: string, messageId: string, emoji: DiscordEmoji, userId: string) {.gcsafe.}
-  OnInteractionEvent* = proc(c: GuildyClient, interaction: DiscordInteraction) {.gcsafe.}
-
 proc stop*(c: GuildyClient) =
   ## Stop the gateway connection.
   c.running = false
@@ -640,11 +645,7 @@ proc connectAndStoreVoice(c: GuildyClient, state: VoiceState) {.async.} =
 proc handleEvent(
   c: GuildyClient,
   ws: ws.WebSocket,
-  event: JsonNode,
-  onRaw: OnRawEvent,
-  onMessage: OnMessageEvent,
-  onReaction: OnReactionEvent,
-  onInteraction: OnInteractionEvent
+  event: JsonNode
 ) {.async.} =
   ## Dispatch a gateway event to the appropriate handler.
   if event.hasKey("s") and event["s"].kind in {JInt, JFloat}:
@@ -660,9 +661,9 @@ proc handleEvent(
   elif t == "RESUMED":
     discard
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
-    if onMessage != nil:
+    if c.onMessage != nil:
       let msg = fromJson($event["d"], DiscordMessage)
-      onMessage(c, msg)
+      c.onMessage(c, msg)
   elif t == "VOICE_STATE_UPDATE":
     let vs = fromJson($event["d"], VoiceStateUpdateEvent)
     if vs.guild_id in c.voiceStates:
@@ -682,11 +683,11 @@ proc handleEvent(
         # Automatically connect to voice gateway.
         asyncCheck c.connectAndStoreVoice(c.voiceStates[vs.guild_id])
   elif t == "MESSAGE_REACTION_ADD":
-    if onReaction != nil:
+    if c.onReaction != nil:
       let re = fromJson($event["d"], ReactionEvent)
-      onReaction(c, re.channel_id, re.message_id, re.emoji, re.user_id)
+      c.onReaction(c, re.channel_id, re.message_id, re.emoji, re.user_id)
   elif t == "INTERACTION_CREATE":
-    if onInteraction != nil:
+    if c.onInteraction != nil:
       let ie = fromJson($event["d"], InteractionEvent)
       var interaction = DiscordInteraction()
       interaction.id = ie.id
@@ -700,7 +701,7 @@ proc handleEvent(
         interaction.user_id = ie.member.user.id
       elif ie.user != nil:
         interaction.user_id = ie.user.id
-      onInteraction(c, interaction)
+      c.onInteraction(c, interaction)
 
   if event.hasKey("op"):
     let op = event["op"].getInt
@@ -719,24 +720,20 @@ proc handleEvent(
     else:
       discard
 
-  if onRaw != nil:
-    onRaw(c, event)
+  if c.onRaw != nil:
+    c.onRaw(c, event)
 
 proc eventLoop(
   c: GuildyClient,
-  ws: ws.WebSocket,
-  onRaw: OnRawEvent,
-  onMessage: OnMessageEvent,
-  onReaction: OnReactionEvent,
-  onInteraction: OnInteractionEvent
+  ws: ws.WebSocket
 ) {.async.} =
   ## Main event receive loop.
   while ws.readyState == ReadyState.Open and c.running:
     let packet = await ws.receiveStrPacket()
     let event = parseJson(packet)
-    await c.handleEvent(ws, event, onRaw, onMessage, onReaction, onInteraction)
+    await c.handleEvent(ws, event)
 
-proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessage: OnMessageEvent, onReaction: OnReactionEvent, onInteraction: OnInteractionEvent) {.async.} =
+proc connectGateway(c: GuildyClient, resume = false) {.async.} =
   ## Establish a gateway connection, authenticate, and run the event loop.
   echo "Connecting to Discord Gateway"
   let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=10&encoding=json")
@@ -754,7 +751,7 @@ proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessag
   else:
     await c.identifySession(wsClient)
 
-  await c.eventLoop(wsClient, onRaw, onMessage, onReaction, onInteraction)
+  await c.eventLoop(wsClient)
   # ensure close when loop exits
   if wsClient.readyState == ReadyState.Open:
     try: wsClient.close() except CatchableError: discard
@@ -767,10 +764,14 @@ proc startGateway*(
   onInteraction: OnInteractionEvent = nil
 ) =
   ## Blocking loop that maintains a gateway connection and auto-reconnects.
+  if onRaw != nil: c.onRaw = onRaw
+  if onMessage != nil: c.onMessage = onMessage
+  if onReaction != nil: c.onReaction = onReaction
+  if onInteraction != nil: c.onInteraction = onInteraction
   var backoffMs = InitialBackoffMs
   while c.running:
     try:
-      waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage, onReaction, onInteraction)
+      waitFor c.connectGateway(resume = c.sessionId.len > 0)
       backoffMs = InitialBackoffMs
     except WebSocketClosedError:
       echo "WebSocket closed; will reconnect"
