@@ -183,6 +183,12 @@ type
     guild_id*: string
     user*: Author
 
+  TypingStartEvent = ref object
+    channel_id*: string
+    guild_id*: string
+    user_id*: string
+    timestamp*: int
+
 # -------------------------------
 # Types — Outbound REST bodies (internal, for jsony serialization)
 
@@ -300,6 +306,8 @@ type
   OnGuildMemberAddEvent* = proc(c: GuildyClient, guildId: string, member: GuildMember) {.gcsafe.}
   OnGuildMemberRemoveEvent* = proc(c: GuildyClient, guildId: string, user: Author) {.gcsafe.}
   OnChannelEvent* = proc(c: GuildyClient, channel: GuildChannel) {.gcsafe.}
+  # Requires IntentGuildMessageTyping (bit 11) or IntentDirectMessageTyping (bit 14).
+  OnTypingStartEvent* = proc(c: GuildyClient, channelId: string, userId: string, timestamp: int) {.gcsafe.}
 
   GuildyError* = object of CatchableError
     code*: int
@@ -334,6 +342,7 @@ type
     onChannelCreate*: OnChannelEvent
     onChannelUpdate*: OnChannelEvent
     onChannelDelete*: OnChannelEvent
+    onTypingStart*: OnTypingStartEvent
 
     # Voice
     voiceStates*: Table[string, VoiceState]
@@ -761,6 +770,10 @@ proc handleEvent(
     if c.onChannelDelete != nil:
       let channel = fromJson($event["d"], GuildChannel)
       c.onChannelDelete(c, channel)
+  elif t == "TYPING_START":
+    if c.onTypingStart != nil:
+      let ev = fromJson($event["d"], TypingStartEvent)
+      c.onTypingStart(c, ev.channel_id, ev.user_id, ev.timestamp)
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
     if c.onMessage != nil:
       let msg = fromJson($event["d"], DiscordMessage)
