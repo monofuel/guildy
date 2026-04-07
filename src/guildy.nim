@@ -75,6 +75,17 @@ type
     `type`*: int
     name*: Option[string]
 
+  DiscordEmbedField* = ref object
+    name*: string
+    value*: string
+    inline*: bool
+
+  DiscordEmbed* = ref object
+    title*: string
+    description*: string
+    color*: int
+    fields*: seq[DiscordEmbedField]
+
 # -------------------------------
 # Types — Interaction (inbound from gateway, exposed to consumers)
 
@@ -155,6 +166,7 @@ type
   MessagePost = ref object
     ## Body for POST /channels/{id}/messages.
     content*: string
+    embeds*: seq[DiscordEmbed]
 
   DmChannelPost = ref object
     ## Body for POST /users/@me/channels.
@@ -418,6 +430,14 @@ proc postChannelMessage*(c: GuildyClient, channelID: string, content: string): D
     raise newException(GuildyError, &"message content exceeds 2000 characters ({content.len})")
   let resp = c.disCall("POST", c.apiBase / "/channels/" / channelID / "/messages",
     toJson(MessagePost(content: content)))
+  result = fromJson(resp, DiscordMessage)
+
+proc postChannelMessageEmbed*(c: GuildyClient, channelID: string, content: string, embeds: seq[DiscordEmbed]): DiscordMessage {.gcsafe.} =
+  ## Post a message with embeds to a channel.
+  if content.len > 2000:
+    raise newException(GuildyError, &"message content exceeds 2000 characters ({content.len})")
+  let resp = c.disCall("POST", c.apiBase / "/channels/" / channelID / "/messages",
+    toJson(MessagePost(content: content, embeds: embeds)))
   result = fromJson(resp, DiscordMessage)
 
 proc deleteChannelMessage*(c: GuildyClient, channelID: string, messageID: string) =
