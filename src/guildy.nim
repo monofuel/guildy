@@ -522,6 +522,14 @@ proc triggerTypingIndicator*(c: GuildyClient, channelID: string) =
   ## or until the bot sends a message, whichever comes first.
   discard c.disCall("POST", c.apiBase / "/channels/" / channelID / "/typing")
 
+proc addGuildMemberRole*(c: GuildyClient, guildId, userId, roleId: string) =
+  ## Assign a role to a guild member.
+  discard c.disCall("PUT", c.apiBase / "/guilds/" / guildId / "/members/" / userId / "/roles/" / roleId)
+
+proc removeGuildMemberRole*(c: GuildyClient, guildId, userId, roleId: string) =
+  ## Remove a role from a guild member.
+  discard c.disCall("DELETE", c.apiBase / "/guilds/" / guildId / "/members/" / userId / "/roles/" / roleId)
+
 proc getDiscordAttachment*(c: GuildyClient, attachment: DiscordAttachment, cacheDir: string = DefaultCacheDir): string =
   ## Get the attachment file, caching locally. Returns path to local file.
   if not dirExists(cacheDir):
