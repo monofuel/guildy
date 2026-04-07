@@ -291,6 +291,7 @@ type
   OnMessageEvent* = proc(c: GuildyClient, msg: DiscordMessage) {.gcsafe.}
   OnReactionEvent* = proc(c: GuildyClient, channelId: string, messageId: string, emoji: DiscordEmoji, userId: string) {.gcsafe.}
   OnInteractionEvent* = proc(c: GuildyClient, interaction: DiscordInteraction) {.gcsafe.}
+  OnGuildCreateEvent* = proc(c: GuildyClient, guild: DiscordGuild) {.gcsafe.}
 
   GuildyError* = object of CatchableError
     code*: int
@@ -319,6 +320,7 @@ type
     onMessage*: OnMessageEvent
     onReaction*: OnReactionEvent
     onInteraction*: OnInteractionEvent
+    onGuildCreate*: OnGuildCreateEvent
 
     # Voice
     voiceStates*: Table[string, VoiceState]
@@ -713,6 +715,10 @@ proc handleEvent(
     await c.sendPresenceUpdate(ws)
   elif t == "RESUMED":
     discard
+  elif t == "GUILD_CREATE":
+    if c.onGuildCreate != nil:
+      let guild = fromJson($event["d"], DiscordGuild)
+      c.onGuildCreate(c, guild)
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
     if c.onMessage != nil:
       let msg = fromJson($event["d"], DiscordMessage)
