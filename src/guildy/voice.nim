@@ -62,6 +62,7 @@ type
     vmDisconnected
 
   OnVoiceMilestoneEvent* = proc(vc: VoiceConnection, milestone: VoiceMilestone) {.gcsafe.}
+  OnDaveRosterChangeEvent* = proc(vc: VoiceConnection, userId: string, joined: bool) {.gcsafe.}
 
   VoiceState* = ref object
     ## Tracks voice connection state for a single guild.
@@ -97,6 +98,7 @@ type
       daveProtocolVersion*: uint16
       daveHasExternalSender*: bool
       daveKeyPackageSent*: bool
+      onDaveRosterChange*: OnDaveRosterChangeEvent
 
   OnVoiceStateEvent* = proc(state: VoiceState) {.gcsafe.}
   OnVoiceConnectedEvent* = proc(vc: VoiceConnection) {.gcsafe.}
@@ -343,6 +345,8 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
         if idx >= 0:
           vc.recognizedUserIds.delete(idx)
           voiceLog "DAVE: recognized user removed: ", userId
+          if vc.onDaveRosterChange != nil:
+            vc.onDaveRosterChange(vc, userId, false)
   of 11:
     # clients_connect: user IDs of users connected to the media session
     when defined(guildyVoice):
@@ -353,6 +357,8 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
           if userId notin vc.recognizedUserIds:
             vc.recognizedUserIds.add(userId)
             voiceLog "DAVE: recognized user added: ", userId
+            if vc.onDaveRosterChange != nil:
+              vc.onDaveRosterChange(vc, userId, true)
   of 12, 14, 15, 18, 20:
     # Known but unhandled opcodes (flags, etc.)
     discard

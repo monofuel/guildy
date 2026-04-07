@@ -36,6 +36,23 @@ suite "voice opcodes":
     check payload["op"].getInt == 5
     check payload["d"]["speaking"].getInt == 0
 
+suite "DAVE roster change callback":
+  test "OnDaveRosterChangeEvent type exists and is exported":
+    check compiles(block:
+      var cb: OnDaveRosterChangeEvent)
+
+  when defined(guildyVoice):
+    test "onDaveRosterChange field is accessible on VoiceConnection":
+      check compiles(block:
+        var vc: VoiceConnection
+        vc.onDaveRosterChange = nil)
+
+    test "onDaveRosterChange accepts a proc with correct signature":
+      check compiles(block:
+        var vc: VoiceConnection
+        vc.onDaveRosterChange = proc(v: VoiceConnection, userId: string,
+            joined: bool) {.gcsafe.} = discard)
+
 suite "UDP procs":
   test "sendUdp and recvUdp are exported":
     # Verify the procs are accessible at compile time.
