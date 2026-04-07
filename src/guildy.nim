@@ -59,7 +59,7 @@ type
     channel_id*: string
     author*: Author
     attachments*: seq[DiscordAttachment]
-    mentions*: seq[JsonNode]
+    mentions*: seq[Author]
     mention_roles*: seq[string]
     reactions*: seq[DiscordReaction]
     pinned*: bool

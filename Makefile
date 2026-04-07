@@ -6,6 +6,7 @@ NIM_PATHS := --path:"$(NP)/curly/src" --path:"$(NP)/jsony/src" --path:"$(NP)/web
 test:
 	nim c $(NIM_PATHS) -r tests/test_guildy_error.nim
 	nim c $(NIM_PATHS) -r tests/test_interaction_options.nim
+	nim c $(NIM_PATHS) -r tests/test_mentions.nim
 
 integration-test:
 	@echo "no integration tests configured"
