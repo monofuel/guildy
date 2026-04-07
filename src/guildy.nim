@@ -263,6 +263,9 @@ const
   DefaultCurlTimeout: float32 = 60 * 3
   DefaultCacheDir = "/tmp/guildy_cache/"
   MaxRateLimitRetries = 3
+  InitialBackoffMs = 1000
+  MaxBackoffMs = 60_000
+  BackoffMultiplier = 2.0
 
   # Discord gateway intent bit flags
   IntentGuilds* = 1 shl 0
@@ -703,17 +706,23 @@ proc startGateway*(
   onInteraction: OnInteractionEvent = nil
 ) =
   ## Blocking loop that maintains a gateway connection and auto-reconnects.
+  var backoffMs = InitialBackoffMs
   while c.running:
     try:
       waitFor c.connectGateway(resume = c.sessionId.len > 0, onRaw, onMessage, onReaction, onInteraction)
+      backoffMs = InitialBackoffMs
     except WebSocketClosedError:
       echo "WebSocket closed; will reconnect"
       if c.running:
-        sleep(1000)
+        let jitter = rand(backoffMs div 4)
+        sleep(backoffMs + jitter)
+        backoffMs = min(int(backoffMs.float * BackoffMultiplier), MaxBackoffMs)
         # on reconnect attempts, force identify if too long without heartbeat
         if c.lastHeartbeat != 0 and (epochTime() - c.lastHeartbeat) > 120:
           c.sessionId = ""
     except CatchableError as e:
       echo "Gateway error: ", e.msg
       if c.running:
-        sleep(3000)
+        let jitter = rand(backoffMs div 4)
+        sleep(backoffMs + jitter)
+        backoffMs = min(int(backoffMs.float * BackoffMultiplier), MaxBackoffMs)
