@@ -304,6 +304,9 @@ type
     onVoiceConnected*: OnVoiceConnectedEvent
     onVoiceMilestone*: OnVoiceMilestoneEvent
 
+    # Logging
+    verbose*: bool
+
 const
   DefaultUserAgent = "Guildy Client"
   DefaultCurlTimeout: float32 = 60 * 3
@@ -362,8 +365,14 @@ proc newGuildyClient*(
     sequence: 0,
     voiceStates: initTable[string, VoiceState](),
     voiceConnections: initTable[string, VoiceConnection](),
+    verbose: true,
   )
 
+
+proc log(c: GuildyClient, msg: string) =
+  ## Emit msg to stdout only when verbose logging is enabled.
+  if c.verbose:
+    echo msg
 
 # -------------------------------
 # REST helpers
@@ -420,7 +429,7 @@ proc disCall(c: GuildyClient, verb: string, uri: Uri, body: string = ""): string
         (parseFloat(retryAfter) * 1000).int
       else:
         1000 * (attempt + 1)
-      echo &"Rate limited on {verb} {uri}, retrying after {sleepMs}ms (attempt {attempt + 1}/{MaxRateLimitRetries})"
+      c.log(&"Rate limited on {verb} {uri}, retrying after {sleepMs}ms (attempt {attempt + 1}/{MaxRateLimitRetries})")
       sleep(sleepMs)
       continue
 
@@ -656,7 +665,7 @@ proc connectAndStoreVoice(c: GuildyClient, state: VoiceState) {.async.} =
     if c.onVoiceConnected != nil:
       c.onVoiceConnected(vc)
   except CatchableError as e:
-    echo "Voice gateway error: ", e.msg
+    c.log("Voice gateway error: " & e.msg)
 
 proc handleEvent(
   c: GuildyClient,
@@ -688,7 +697,7 @@ proc handleEvent(
         c.voiceStates[vs.guild_id].userId = vs.user_id
   elif t == "VOICE_SERVER_UPDATE":
     let vs = fromJson($event["d"], VoiceServerUpdateEvent)
-    echo "VOICE_SERVER_UPDATE: ", $event["d"]
+    c.log("VOICE_SERVER_UPDATE: " & $event["d"])
     if vs.guild_id in c.voiceStates:
       c.voiceStates[vs.guild_id].token = vs.token
       c.voiceStates[vs.guild_id].endpoint = vs.endpoint
@@ -751,14 +760,14 @@ proc eventLoop(
 
 proc connectGateway(c: GuildyClient, resume = false) {.async.} =
   ## Establish a gateway connection, authenticate, and run the event loop.
-  echo "Connecting to Discord Gateway"
+  c.log("Connecting to Discord Gateway")
   let wsClient = await newWebSocket("wss://gateway.discord.gg/?v=10&encoding=json")
   c.ws = wsClient
-  echo "Gateway connected"
+  c.log("Gateway connected")
   # Receive Hello, start heartbeat
   let helloPacket = await wsClient.receiveStrPacket()
   let hello = fromJson($parseJson(helloPacket)["d"], HelloEvent)
-  echo "Hello received; heartbeat_interval=", hello.heartbeat_interval
+  c.log("Hello received; heartbeat_interval=" & $hello.heartbeat_interval)
   let jitter = 0.1
   asyncCheck c.heartbeat(wsClient, hello.heartbeat_interval, jitter)
 
@@ -790,7 +799,7 @@ proc startGateway*(
       waitFor c.connectGateway(resume = c.sessionId.len > 0)
       backoffMs = InitialBackoffMs
     except WebSocketClosedError:
-      echo "WebSocket closed; will reconnect"
+      c.log("WebSocket closed; will reconnect")
       if c.running:
         let jitter = rand(backoffMs div 4)
         sleep(backoffMs + jitter)
@@ -799,7 +808,7 @@ proc startGateway*(
         if c.lastHeartbeat != 0 and (epochTime() - c.lastHeartbeat) > 120:
           c.sessionId = ""
     except CatchableError as e:
-      echo "Gateway error: ", e.msg
+      c.log("Gateway error: " & e.msg)
       if c.running:
         let jitter = rand(backoffMs div 4)
         sleep(backoffMs + jitter)
