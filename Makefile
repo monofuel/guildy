@@ -10,6 +10,7 @@ test:
 	nim c $(NIM_PATHS) -r tests/test_voice.nim
 	nim c $(NIM_PATHS) -r tests/test_embed.nim
 	nim c $(NIM_PATHS) -r tests/test_serialization.nim
+	nim c $(NIM_PATHS) -r tests/test_verbose.nim
 
 integration-test:
 	@echo "no integration tests configured"
