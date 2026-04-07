@@ -18,7 +18,7 @@
     },
     "manager": {
       "harness": "claude-code",
-      "model": "claude-sonnet-4-6",
+      "model": "claude-opus-4-6",
       "reasoningEffort": "",
       "hardTimeout": 3600000,
       "noOutputTimeout": 300000,
@@ -62,7 +62,7 @@
     "chatHistoryCount": 8
   },
   "mattermost": {
-    "enabled": true,
+    "enabled": false,
     "url": "https://mattermost.solution-nine.monofuel.dev",
     "channelId": "4yth11hka3y5ido3twa8phuf5c",
     "allowedUserIds": [
