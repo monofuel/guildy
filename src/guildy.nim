@@ -527,6 +527,19 @@ proc sendPresenceUpdate(c: GuildyClient, ws: ws.WebSocket) {.async.} =
   )
   await ws.sendGatewayOp(3, toJson(data))
 
+proc updatePresence*(c: GuildyClient, status: string, activityName: string, activityType: int = 0) {.async.} =
+  ## Update the bot's presence at runtime. Raises GuildyError if the gateway is not connected.
+  if c.ws == nil or c.ws.readyState != ReadyState.Open:
+    raise newException(GuildyError, "Gateway is not connected")
+  c.activityName = activityName
+  let data = PresenceData(
+    since: none(int),
+    status: status,
+    activities: @[PresenceActivity(name: activityName, `type`: activityType)],
+    afk: false
+  )
+  await c.ws.sendGatewayOp(3, toJson(data))
+
 proc identifySession(c: GuildyClient, ws: ws.WebSocket) {.async.} =
   ## Send identify payload (opcode 2).
   # Uses %* for the properties sub-object because Discord requires $-prefixed keys

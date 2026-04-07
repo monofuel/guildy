@@ -1,5 +1,5 @@
 import
-  std/[unittest, strutils],
+  std/[unittest, strutils, asyncdispatch],
   ../src/guildy
 
 proc newTestClient(): GuildyClient =
@@ -33,3 +33,9 @@ suite "postChannelMessage":
     let longContent = 'x'.repeat(2001)
     expect GuildyError:
       discard client.postChannelMessage("channel-id", longContent)
+
+suite "updatePresence":
+  test "raises GuildyError when ws is nil":
+    let client = newTestClient()
+    expect GuildyError:
+      waitFor client.updatePresence("online", "Testing")
