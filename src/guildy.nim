@@ -299,6 +299,7 @@ type
   # Requires IntentGuildMembers (bit 1) to receive these events.
   OnGuildMemberAddEvent* = proc(c: GuildyClient, guildId: string, member: GuildMember) {.gcsafe.}
   OnGuildMemberRemoveEvent* = proc(c: GuildyClient, guildId: string, user: Author) {.gcsafe.}
+  OnChannelEvent* = proc(c: GuildyClient, channel: GuildChannel) {.gcsafe.}
 
   GuildyError* = object of CatchableError
     code*: int
@@ -330,6 +331,9 @@ type
     onGuildCreate*: OnGuildCreateEvent
     onGuildMemberAdd*: OnGuildMemberAddEvent
     onGuildMemberRemove*: OnGuildMemberRemoveEvent
+    onChannelCreate*: OnChannelEvent
+    onChannelUpdate*: OnChannelEvent
+    onChannelDelete*: OnChannelEvent
 
     # Voice
     voiceStates*: Table[string, VoiceState]
@@ -745,6 +749,18 @@ proc handleEvent(
     if c.onGuildMemberRemove != nil:
       let ev = fromJson($event["d"], GuildMemberRemoveEvent)
       c.onGuildMemberRemove(c, ev.guild_id, ev.user)
+  elif t == "CHANNEL_CREATE":
+    if c.onChannelCreate != nil:
+      let channel = fromJson($event["d"], GuildChannel)
+      c.onChannelCreate(c, channel)
+  elif t == "CHANNEL_UPDATE":
+    if c.onChannelUpdate != nil:
+      let channel = fromJson($event["d"], GuildChannel)
+      c.onChannelUpdate(c, channel)
+  elif t == "CHANNEL_DELETE":
+    if c.onChannelDelete != nil:
+      let channel = fromJson($event["d"], GuildChannel)
+      c.onChannelDelete(c, channel)
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
     if c.onMessage != nil:
       let msg = fromJson($event["d"], DiscordMessage)
