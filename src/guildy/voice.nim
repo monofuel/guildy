@@ -90,6 +90,8 @@ type
     udpSocket*: Socket
     externalIp*: string
     externalPort*: uint16
+    rtpSequence*: uint16
+    rtpTimestamp*: uint32
     when defined(guildyVoice):
       daveSession*: DAVESessionHandle
       daveTransitions*: Table[int, uint16]
@@ -106,6 +108,26 @@ type
 proc fireMilestone*(vc: VoiceConnection, milestone: VoiceMilestone) =
   if vc.onMilestone != nil:
     vc.onMilestone(vc, milestone)
+
+proc buildRtpHeader*(vc: VoiceConnection): array[12, uint8] =
+  ## Build a 12-byte RTP header for the next audio packet.
+  result[0] = 0x80  # version 2, no padding, no extension, no CSRC
+  result[1] = 0x78  # payload type 120 (Opus)
+  # sequence (big-endian)
+  result[2] = uint8((vc.rtpSequence shr 8) and 0xFF)
+  result[3] = uint8(vc.rtpSequence and 0xFF)
+  # timestamp (big-endian)
+  result[4] = uint8((vc.rtpTimestamp shr 24) and 0xFF)
+  result[5] = uint8((vc.rtpTimestamp shr 16) and 0xFF)
+  result[6] = uint8((vc.rtpTimestamp shr 8) and 0xFF)
+  result[7] = uint8(vc.rtpTimestamp and 0xFF)
+  # SSRC (big-endian)
+  result[8] = uint8((vc.ssrc shr 24) and 0xFF)
+  result[9] = uint8((vc.ssrc shr 16) and 0xFF)
+  result[10] = uint8((vc.ssrc shr 8) and 0xFF)
+  result[11] = uint8(vc.ssrc and 0xFF)
+  vc.rtpSequence += 1
+  vc.rtpTimestamp += 960
 
 # -------------------------------
 # DAVE helpers (gated behind guildyVoice)
@@ -531,6 +553,8 @@ proc connectVoiceGateway*(state: VoiceState,
     lastSeqAck: -1,
     ready: false,
     onMilestone: onMilestone,
+    rtpSequence: 0,
+    rtpTimestamp: 0,
   )
 
   when defined(guildyVoice):
