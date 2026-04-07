@@ -214,11 +214,11 @@ type
     session_id*: string
     seq*: int
 
-  PresenceActivity = ref object
+  PresenceActivity* = ref object
     name*: string
     `type`*: int
 
-  PresenceData = ref object
+  PresenceData* = ref object
     since*: Option[int]
     activities*: seq[PresenceActivity]
     status*: string
