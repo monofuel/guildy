@@ -1,7 +1,7 @@
 .PHONY: test integration-test e2e-test build
 
 test:
-	@echo "no tests configured"
+	nim c -r tests/test_guildy_error.nim
 
 integration-test:
 	@echo "no integration tests configured"
