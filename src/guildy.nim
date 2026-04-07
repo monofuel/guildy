@@ -490,8 +490,8 @@ type
 proc stop*(c: GuildyClient) =
   ## Stop the gateway connection.
   c.running = false
-  if c.ws != nil:
-    try: c.ws.close() except: discard
+  if c.ws != nil and c.ws.readyState == ReadyState.Open:
+    try: c.ws.close() except CatchableError: discard
 
 proc sendGatewayOp(ws: ws.WebSocket, op: int, d: string) {.async.} =
   ## Send a gateway opcode with a pre-serialized JSON payload for d.
@@ -711,7 +711,8 @@ proc connectGateway(c: GuildyClient, resume = false, onRaw: OnRawEvent, onMessag
 
   await c.eventLoop(wsClient, onRaw, onMessage, onReaction, onInteraction)
   # ensure close when loop exits
-  try: wsClient.close() except: discard
+  if wsClient.readyState == ReadyState.Open:
+    try: wsClient.close() except CatchableError: discard
 
 proc startGateway*(
   c: GuildyClient,
