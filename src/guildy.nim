@@ -509,6 +509,11 @@ proc deleteChannelMessage*(c: GuildyClient, channelID: string, messageID: string
   ## Delete a message from a channel.
   discard c.disCall("DELETE", c.apiBase / "/channels/" / channelID / "/messages/" / messageID)
 
+proc triggerTypingIndicator*(c: GuildyClient, channelID: string) =
+  ## Trigger the typing indicator in a channel. The indicator lasts ~10 s
+  ## or until the bot sends a message, whichever comes first.
+  discard c.disCall("POST", c.apiBase / "/channels/" / channelID / "/typing")
+
 proc getDiscordAttachment*(c: GuildyClient, attachment: DiscordAttachment, cacheDir: string = DefaultCacheDir): string =
   ## Get the attachment file, caching locally. Returns path to local file.
   if not dirExists(cacheDir):
