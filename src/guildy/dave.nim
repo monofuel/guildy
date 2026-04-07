@@ -260,7 +260,8 @@ when defined(guildyVoice):
 
   proc mlsFailureCallback(source: cstring, reason: cstring,
       userData: pointer) {.cdecl.} =
-    echo "DAVE MLS failure: source=", $source, " reason=", $reason
+    when defined(guildyVoiceDebug):
+      echo "DAVE MLS failure: source=", $source, " reason=", $reason
 
   proc createDaveSession*(authSessionId: string): DAVESessionHandle =
     ## Create a new DAVE session with default failure callback.

@@ -6,6 +6,10 @@ import
 
 from std/posix import Timeval, Time, Suseconds, setsockopt, SOL_SOCKET, SO_RCVTIMEO
 
+template voiceLog(args: varargs[untyped]) =
+  when defined(guildyVoiceDebug):
+    echo args
+
 when defined(guildyVoice):
   import std/tables
   import guildy/dave
@@ -112,7 +116,7 @@ when defined(guildyVoice):
   proc sendDaveTextOp(vc: VoiceConnection, op: int, d: JsonNode) {.async.} =
     ## Send a DAVE opcode as a JSON text frame.
     let payload = %*{"op": op, "d": d}
-    echo "DAVE send text op=", op, " payload=", $payload
+    voiceLog "DAVE send text op=", op, " payload=", $payload
     await vc.ws.send($payload)
 
   proc sendDaveBinaryOp(vc: VoiceConnection, op: int,
@@ -123,7 +127,7 @@ when defined(guildyVoice):
     frame[0] = char(op)
     if payload.len > 0:
       copyMem(addr frame[1], unsafeAddr payload[0], payload.len)
-    echo "DAVE send binary op=", op, " payload_len=", payload.len
+    voiceLog "DAVE send binary op=", op, " payload_len=", payload.len
     await vc.ws.send(frame, Binary)
 
   proc sendMlsKeyPackage(vc: VoiceConnection) {.async.} =
@@ -132,7 +136,7 @@ when defined(guildyVoice):
       await vc.sendDaveBinaryOp(DaveMlsKeyPackageOp, keyPkg)
       vc.fireMilestone(vmDaveKeyPackageSent)
     else:
-      echo "DAVE: empty key package, cannot send"
+      voiceLog "DAVE: empty key package, cannot send"
 
   proc sendReadyForTransition(vc: VoiceConnection, transitionId: int) {.async.} =
     if transitionId != DaveProtocolInitTransitionId:
@@ -167,7 +171,7 @@ when defined(guildyVoice):
     if epoch == MlsNewGroupExpectedEpoch:
       daveSessionInit(vc.daveSession, protocolVersion,
           parseBiggestUInt(vc.state.guildId), cstring(vc.state.userId))
-      echo "DAVE: session init version=", protocolVersion, " groupId=",
+      voiceLog "DAVE: session init version=", protocolVersion, " groupId=",
           vc.state.guildId
 
   proc handleDaveProtocolInit(vc: VoiceConnection,
@@ -185,13 +189,13 @@ when defined(guildyVoice):
   proc handleDaveProtocolExecuteTransition(vc: VoiceConnection,
       transitionId: int) =
     if transitionId notin vc.daveTransitions:
-      echo "DAVE: unknown transition ", transitionId
+      voiceLog "DAVE: unknown transition ", transitionId
       return
     let protocolVersion = vc.daveTransitions[transitionId]
     vc.daveTransitions.del(transitionId)
     if protocolVersion == 0:
       daveSessionReset(vc.daveSession)
-    echo "DAVE: executed transition ", transitionId, " version=",
+    voiceLog "DAVE: executed transition ", transitionId, " version=",
         protocolVersion
     vc.fireMilestone(vmDaveComplete)
 
@@ -282,7 +286,7 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
       modes.add(m.getStr)
     vc.modes = modes
     vc.ready = true
-    echo "Voice Ready: ssrc=", vc.ssrc, " ip=", vc.ip, " port=", vc.port,
+    voiceLog "Voice Ready: ssrc=", vc.ssrc, " ip=", vc.ip, " port=", vc.port,
         " modes=", vc.modes
     vc.fireMilestone(vmReady)
 
@@ -291,7 +295,7 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
     vc.udpSocket = sock
     vc.externalIp = extIp
     vc.externalPort = extPort
-    echo "UDP IP discovered: ", extIp, ":", extPort
+    voiceLog "UDP IP discovered: ", extIp, ":", extPort
     vc.fireMilestone(vmUdpDiscovered)
 
     # Send Select Protocol (op 1)
@@ -307,7 +311,7 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
         }
       }
     }
-    echo "Voice Select Protocol: ", $selectPayload
+    voiceLog "Voice Select Protocol: ", $selectPayload
     await vc.ws.send($selectPayload)
     vc.fireMilestone(vmSelectProtocolSent)
   of VoiceSessionDescriptionOp:
@@ -316,13 +320,13 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
     for b in d["secret_key"]:
       key.add(b.getInt.uint8)
     vc.secretKey = key
-    echo "Voice Session Description received (secret_key length=",
+    voiceLog "Voice Session Description received (secret_key length=",
         vc.secretKey.len, ")"
     vc.fireMilestone(vmSessionDescription)
     when defined(guildyVoice):
       if d.hasKey("dave_protocol_version"):
         vc.daveProtocolVersion = d["dave_protocol_version"].getInt.uint16
-        echo "DAVE: SessionDescription dave_protocol_version=",
+        voiceLog "DAVE: SessionDescription dave_protocol_version=",
             vc.daveProtocolVersion
   of VoiceHeartbeatAckOp:
     vc.lastHeartbeat = epochTime()
@@ -338,7 +342,7 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
         let idx = vc.recognizedUserIds.find(userId)
         if idx >= 0:
           vc.recognizedUserIds.delete(idx)
-          echo "DAVE: recognized user removed: ", userId
+          voiceLog "DAVE: recognized user removed: ", userId
   of 11:
     # clients_connect: user IDs of users connected to the media session
     when defined(guildyVoice):
@@ -348,7 +352,7 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
           let userId = uid.getStr
           if userId notin vc.recognizedUserIds:
             vc.recognizedUserIds.add(userId)
-            echo "DAVE: recognized user added: ", userId
+            voiceLog "DAVE: recognized user added: ", userId
   of 12, 14, 15, 18, 20:
     # Known but unhandled opcodes (flags, etc.)
     discard
@@ -359,26 +363,26 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
         let d = event["d"]
         let transitionId = d["transition_id"].getInt
         let protoVer = d["protocol_version"].getInt.uint16
-        echo "DAVE: PrepareTransition id=", transitionId, " version=", protoVer
+        voiceLog "DAVE: PrepareTransition id=", transitionId, " version=", protoVer
         vc.prepareDaveProtocolRatchets(transitionId, protoVer)
         await vc.sendReadyForTransition(transitionId)
       of DaveExecuteTransitionOp:
         let d = event["d"]
         let transitionId = d["transition_id"].getInt
-        echo "DAVE: ExecuteTransition id=", transitionId
+        voiceLog "DAVE: ExecuteTransition id=", transitionId
         vc.handleDaveProtocolExecuteTransition(transitionId)
       of DavePrepareEpochOp:
         let d = event["d"]
         let epoch = d["epoch"].getStr
         let protoVer = d["protocol_version"].getInt.uint16
-        echo "DAVE: PrepareEpoch epoch=", epoch, " version=", protoVer
+        voiceLog "DAVE: PrepareEpoch epoch=", epoch, " version=", protoVer
         vc.handleDaveProtocolPrepareEpoch(epoch, protoVer)
         if epoch == MlsNewGroupExpectedEpoch:
           await vc.sendMlsKeyPackage()
       else:
-        echo "Voice: unhandled text opcode ", op
+        voiceLog "Voice: unhandled text opcode ", op
     else:
-      echo "Voice: unhandled text opcode ", op
+      voiceLog "Voice: unhandled text opcode ", op
 
 when defined(guildyVoice):
   proc handleDaveBinaryEvent(vc: VoiceConnection, op: int,
@@ -386,7 +390,7 @@ when defined(guildyVoice):
     ## Dispatch a DAVE binary opcode.
     case op
     of DaveMlsExternalSenderOp:
-      echo "DAVE: ExternalSender binary len=", payload.len
+      voiceLog "DAVE: ExternalSender binary len=", payload.len
       setExternalSender(vc.daveSession, payload)
       vc.daveHasExternalSender = true
       # If we have the protocol version and haven't sent key package yet,
@@ -394,7 +398,7 @@ when defined(guildyVoice):
       if vc.daveProtocolVersion > 0 and not vc.daveKeyPackageSent:
         daveSessionInit(vc.daveSession, vc.daveProtocolVersion,
             parseBiggestUInt(vc.state.guildId), cstring(vc.state.userId))
-        echo "DAVE: session init version=", vc.daveProtocolVersion,
+        voiceLog "DAVE: session init version=", vc.daveProtocolVersion,
             " groupId=", vc.state.guildId
         await vc.sendMlsKeyPackage()
         vc.daveKeyPackageSent = true
@@ -402,40 +406,40 @@ when defined(guildyVoice):
       # Binary format: [1-byte operation_type][proposals data]
       # operation_type: 0=append, 1=revoke
       if payload.len < 1:
-        echo "DAVE: Proposals too short: ", payload.len
+        voiceLog "DAVE: Proposals too short: ", payload.len
         return
       let opType = payload[0]
       let proposalData = payload[1..^1]
-      echo "DAVE: Proposals binary op_type=", opType, " data_len=", proposalData.len
+      voiceLog "DAVE: Proposals binary op_type=", opType, " data_len=", proposalData.len
       if opType == 0: # append
         let commitWelcome = processProposals(vc.daveSession, proposalData,
             vc.getRecognizedUserIdsWithSelf())
         if commitWelcome.len > 0:
           await vc.sendMlsCommitWelcome(commitWelcome)
       else:
-        echo "DAVE: Proposals revoke not yet implemented"
+        voiceLog "DAVE: Proposals revoke not yet implemented"
     of DaveMlsPrepareCommitTransitionOp:
       # Binary format: [2-byte big-endian transition_id][MLS commit data]
       if payload.len < 2:
-        echo "DAVE: PrepareCommitTransition too short: ", payload.len
+        voiceLog "DAVE: PrepareCommitTransition too short: ", payload.len
         return
       let transitionId = (int(payload[0]) shl 8) or int(payload[1])
       let commit = payload[2..^1]
-      echo "DAVE: PrepareCommitTransition id=", transitionId, " commit_len=",
+      voiceLog "DAVE: PrepareCommitTransition id=", transitionId, " commit_len=",
           commit.len
       let commitResult = processCommit(vc.daveSession, commit)
       if commitResult == nil or daveCommitResultIsFailed(commitResult):
-        echo "DAVE: commit failed, flagging invalid and reinitializing"
+        voiceLog "DAVE: commit failed, flagging invalid and reinitializing"
         if commitResult != nil:
           daveCommitResultDestroy(commitResult)
         await vc.sendMlsInvalidCommitWelcome(transitionId)
         let protoVer = daveSessionGetProtocolVersion(vc.daveSession)
         await vc.handleDaveProtocolInit(protoVer)
       elif daveCommitResultIsIgnored(commitResult):
-        echo "DAVE: commit ignored"
+        voiceLog "DAVE: commit ignored"
         daveCommitResultDestroy(commitResult)
       else:
-        echo "DAVE: commit success, preparing ratchets"
+        voiceLog "DAVE: commit success, preparing ratchets"
         daveCommitResultDestroy(commitResult)
         let protoVer = daveSessionGetProtocolVersion(vc.daveSession)
         vc.prepareDaveProtocolRatchets(transitionId, protoVer)
@@ -443,25 +447,25 @@ when defined(guildyVoice):
     of DaveMlsWelcomeOp:
       # Binary format: [2-byte big-endian transition_id][MLS welcome data]
       if payload.len < 2:
-        echo "DAVE: Welcome too short: ", payload.len
+        voiceLog "DAVE: Welcome too short: ", payload.len
         return
       let transitionId = (int(payload[0]) shl 8) or int(payload[1])
       let welcome = payload[2..^1]
-      echo "DAVE: Welcome id=", transitionId, " welcome_len=", welcome.len
+      voiceLog "DAVE: Welcome id=", transitionId, " welcome_len=", welcome.len
       let welcomeResult = processWelcome(vc.daveSession, welcome,
           vc.getRecognizedUserIdsWithSelf())
       if welcomeResult == nil:
-        echo "DAVE: welcome failed, flagging invalid and resending key package"
+        voiceLog "DAVE: welcome failed, flagging invalid and resending key package"
         await vc.sendMlsInvalidCommitWelcome(transitionId)
         await vc.sendMlsKeyPackage()
       else:
-        echo "DAVE: welcome success, preparing ratchets"
+        voiceLog "DAVE: welcome success, preparing ratchets"
         daveWelcomeResultDestroy(welcomeResult)
         let protoVer = daveSessionGetProtocolVersion(vc.daveSession)
         vc.prepareDaveProtocolRatchets(transitionId, protoVer)
         await vc.sendReadyForTransition(transitionId)
     else:
-      echo "DAVE: unhandled binary opcode ", op
+      voiceLog "DAVE: unhandled binary opcode ", op
 
 proc voiceEventLoop(vc: VoiceConnection) {.async.} =
   ## Main receive loop for the voice WebSocket.
@@ -469,20 +473,20 @@ proc voiceEventLoop(vc: VoiceConnection) {.async.} =
     let (opcode, data) = await vc.ws.receivePacket()
     case opcode
     of Text:
-      echo "Voice WS text: ", data[0..min(data.len-1, 500)]
+      voiceLog "Voice WS text: ", data[0..min(data.len-1, 500)]
       let event = parseJson(data)
       await vc.handleVoiceTextEvent(event)
     of Binary:
       # Binary DAVE frame format (server→client):
       #   [2-byte big-endian sequence number][1-byte opcode][payload]
       if data.len < 3:
-        echo "Voice WS binary too short: len=", data.len
+        voiceLog "Voice WS binary too short: len=", data.len
       else:
         let seqNum = (int(data[0].ord) shl 8) or int(data[1].ord)
         let binaryOp = int(data[2].ord)
         # Track sequence number for heartbeat seq_ack
         vc.lastSeqAck = seqNum
-        echo "Voice WS binary: seq=", seqNum, " op=", binaryOp,
+        voiceLog "Voice WS binary: seq=", seqNum, " op=", binaryOp,
             " payload_len=", data.len - 3
         when defined(guildyVoice):
           var payload = newSeq[uint8](data.len - 3)
@@ -490,7 +494,7 @@ proc voiceEventLoop(vc: VoiceConnection) {.async.} =
             copyMem(addr payload[0], unsafeAddr data[3], payload.len)
           await vc.handleDaveBinaryEvent(binaryOp, payload)
         else:
-          echo "Voice: binary DAVE opcode ", binaryOp, " ignored (guildyVoice not defined)"
+          voiceLog "Voice: binary DAVE opcode ", binaryOp, " ignored (guildyVoice not defined)"
     of Close:
       var closeCode: int = 0
       var closeReason = ""
@@ -498,7 +502,7 @@ proc voiceEventLoop(vc: VoiceConnection) {.async.} =
         closeCode = (data[0].ord shl 8) or data[1].ord
         if data.len > 2:
           closeReason = data[2..^1]
-      echo "Voice WS close frame: code=", closeCode, " reason=", closeReason
+      voiceLog "Voice WS close frame: code=", closeCode, " reason=", closeReason
       vc.ws.readyState = Closed
       return
     of Ping:
@@ -510,7 +514,7 @@ proc connectVoiceGateway*(state: VoiceState,
     onMilestone: OnVoiceMilestoneEvent = nil): Future[VoiceConnection] {.async.} =
   ## Connect to the Discord voice WebSocket and perform the identify handshake.
   let url = "wss://" & state.endpoint & "/?v=8"
-  echo "Connecting to Voice Gateway: ", url
+  voiceLog "Connecting to Voice Gateway: ", url
 
   let wsClient = await newWebSocket(url)
   var vc = VoiceConnection(
@@ -528,7 +532,7 @@ proc connectVoiceGateway*(state: VoiceState,
     vc.daveTransitions = initTable[int, uint16]()
     vc.recognizedUserIds = @[]
     vc.latestPreparedTransitionVersion = 0
-    echo "DAVE: session created, max protocol version=",
+    voiceLog "DAVE: session created, max protocol version=",
         daveMaxSupportedProtocolVersion()
     vc.fireMilestone(vmDaveSessionCreated)
 
@@ -536,7 +540,7 @@ proc connectVoiceGateway*(state: VoiceState,
   let helloPacket = await wsClient.receiveStrPacket()
   let helloData = parseJson(helloPacket)
   let heartbeatIntervalMs = helloData["d"]["heartbeat_interval"].getFloat
-  echo "Voice Hello received; heartbeat_interval=", heartbeatIntervalMs
+  voiceLog "Voice Hello received; heartbeat_interval=", heartbeatIntervalMs
   vc.fireMilestone(vmHelloReceived)
 
   # Start voice heartbeat loop.
@@ -565,18 +569,18 @@ proc connectVoiceGateway*(state: VoiceState,
         "token": state.token
       }
     }
-  echo "Voice Identify payload: ", $identifyPayload
+  voiceLog "Voice Identify payload: ", $identifyPayload
   await wsClient.send($identifyPayload)
-  echo "Voice Identify sent"
+  voiceLog "Voice Identify sent"
   vc.fireMilestone(vmIdentifySent)
 
   # Enter event loop (blocks until disconnect).
   try:
     await vc.voiceEventLoop()
   except WebSocketClosedError:
-    echo "Voice WS closed (WebSocketClosedError)"
+    voiceLog "Voice WS closed (WebSocketClosedError)"
   except CatchableError as e:
-    echo "Voice WS error: ", e.msg, " (", e.name, ")"
+    voiceLog "Voice WS error: ", e.msg, " (", e.name, ")"
 
   # Cleanup on exit.
   when defined(guildyVoice):
