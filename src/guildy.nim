@@ -179,6 +179,10 @@ type
     token*: string
     endpoint*: string
 
+  GuildMemberRemoveEvent = ref object
+    guild_id*: string
+    user*: Author
+
 # -------------------------------
 # Types — Outbound REST bodies (internal, for jsony serialization)
 
@@ -292,6 +296,9 @@ type
   OnReactionEvent* = proc(c: GuildyClient, channelId: string, messageId: string, emoji: DiscordEmoji, userId: string) {.gcsafe.}
   OnInteractionEvent* = proc(c: GuildyClient, interaction: DiscordInteraction) {.gcsafe.}
   OnGuildCreateEvent* = proc(c: GuildyClient, guild: DiscordGuild) {.gcsafe.}
+  # Requires IntentGuildMembers (bit 1) to receive these events.
+  OnGuildMemberAddEvent* = proc(c: GuildyClient, guildId: string, member: GuildMember) {.gcsafe.}
+  OnGuildMemberRemoveEvent* = proc(c: GuildyClient, guildId: string, user: Author) {.gcsafe.}
 
   GuildyError* = object of CatchableError
     code*: int
@@ -321,6 +328,8 @@ type
     onReaction*: OnReactionEvent
     onInteraction*: OnInteractionEvent
     onGuildCreate*: OnGuildCreateEvent
+    onGuildMemberAdd*: OnGuildMemberAddEvent
+    onGuildMemberRemove*: OnGuildMemberRemoveEvent
 
     # Voice
     voiceStates*: Table[string, VoiceState]
@@ -727,6 +736,15 @@ proc handleEvent(
     if c.onGuildCreate != nil:
       let guild = fromJson($event["d"], DiscordGuild)
       c.onGuildCreate(c, guild)
+  elif t == "GUILD_MEMBER_ADD":
+    if c.onGuildMemberAdd != nil:
+      let member = fromJson($event["d"], GuildMember)
+      let guildId = event["d"]["guild_id"].getStr
+      c.onGuildMemberAdd(c, guildId, member)
+  elif t == "GUILD_MEMBER_REMOVE":
+    if c.onGuildMemberRemove != nil:
+      let ev = fromJson($event["d"], GuildMemberRemoveEvent)
+      c.onGuildMemberRemove(c, ev.guild_id, ev.user)
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
     if c.onMessage != nil:
       let msg = fromJson($event["d"], DiscordMessage)
