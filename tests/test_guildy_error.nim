@@ -1,5 +1,5 @@
 import
-  std/unittest,
+  std/[unittest, strutils],
   ../src/guildy
 
 suite "GuildyError":

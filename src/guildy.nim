@@ -232,6 +232,8 @@ proc dumpHook*(s: var string, v: PresenceData) =
 
 type
   GuildyError* = object of CatchableError
+    code*: int
+    body*: string
 
   GuildyClient* = ref object
     # REST
@@ -378,9 +380,14 @@ proc disCall(c: GuildyClient, verb: string, uri: Uri, body: string = ""): string
       sleep(sleepMs)
       continue
 
-    raise newException(GuildyError, &"discord error: {resp.code} {resp.body}")
+    var err = newException(GuildyError, &"discord error: {resp.code} {resp.body}")
+    err.code = resp.code
+    err.body = resp.body
+    raise err
 
-  raise newException(GuildyError, &"rate limited after {MaxRateLimitRetries} retries on {verb} {uri}")
+  var rateLimitErr = newException(GuildyError, &"rate limited after {MaxRateLimitRetries} retries on {verb} {uri}")
+  rateLimitErr.code = 429
+  raise rateLimitErr
 
 proc getGuildChannels*(c: GuildyClient, guildID: string): seq[GuildChannel] =
   ## Fetch the list of channels in a guild.
