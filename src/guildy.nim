@@ -87,9 +87,16 @@ type
     ## Guild member wrapper containing the user object.
     user*: InteractionUser
 
+  InteractionCommandOption* = ref object
+    ## A single option value submitted with a slash command interaction.
+    name*: string
+    `type`*: int
+    value*: JsonNode
+
   InteractionCommandData* = ref object
     ## The data payload of a slash command interaction.
     name*: string
+    options*: seq[InteractionCommandOption]
 
   InteractionEvent* = ref object
     ## Raw INTERACTION_CREATE event payload from Discord.
@@ -109,6 +116,7 @@ type
     channel_id*: string
     user_id*: string
     guild_id*: string
+    options*: seq[InteractionCommandOption]
 
 # -------------------------------
 # Types — Gateway inbound events (internal, for jsony deserialization)
@@ -643,6 +651,7 @@ proc handleEvent(
       interaction.guild_id = ie.guild_id
       if ie.data != nil:
         interaction.command_name = ie.data.name
+        interaction.options = ie.data.options
       if ie.member != nil and ie.member.user != nil:
         interaction.user_id = ie.member.user.id
       elif ie.user != nil:
