@@ -25,5 +25,13 @@ jobs:
         restore-keys: |
           ${{ runner.os }}-nimble-
     - run: nimble install -y
+    - name: Run unit tests
+      run: |
+        nim r tests/test_serialization.nim
+        nim r tests/test_embed.nim
+        nim r tests/test_interaction_options.nim
+        nim r tests/test_guildy_error.nim
+        nim r tests/test_mentions.nim
+        nim r tests/test_voice.nim
     # - run: nimble test -y
     # - run: nimble test --gc:orc -y
