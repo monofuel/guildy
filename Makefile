@@ -7,6 +7,7 @@ test:
 	nim c $(NIM_PATHS) -r tests/test_guildy_error.nim
 	nim c $(NIM_PATHS) -r tests/test_interaction_options.nim
 	nim c $(NIM_PATHS) -r tests/test_mentions.nim
+	nim c $(NIM_PATHS) -r tests/test_voice.nim
 
 integration-test:
 	@echo "no integration tests configured"

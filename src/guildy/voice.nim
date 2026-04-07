@@ -591,6 +591,19 @@ proc connectVoiceGateway*(state: VoiceState,
   vc.fireMilestone(vmDisconnected)
   result = vc
 
+proc setSpeaking*(vc: VoiceConnection, speaking: bool) {.async.} =
+  ## Send the Speaking opcode to indicate audio transmission state.
+  let speakingFlag = if speaking: 1 else: 0
+  let payload = %*{
+    "op": VoiceSpeakingOp,
+    "d": {
+      "speaking": speakingFlag,
+      "delay": 0,
+      "ssrc": vc.ssrc
+    }
+  }
+  await vc.ws.send($payload)
+
 proc disconnectVoice*(vc: VoiceConnection) =
   ## Close the voice WebSocket connection.
   vc.running = false
