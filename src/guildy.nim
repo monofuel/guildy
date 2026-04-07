@@ -414,11 +414,10 @@ proc getChannelMessages*(
 
 proc postChannelMessage*(c: GuildyClient, channelID: string, content: string): DiscordMessage {.gcsafe.} =
   ## Post a text message to a channel.
-  var text = content
-  if text.len > 2000:
-    text = text[0 ..< 2000]
+  if content.len > 2000:
+    raise newException(GuildyError, &"message content exceeds 2000 characters ({content.len})")
   let resp = c.disCall("POST", c.apiBase / "/channels/" / channelID / "/messages",
-    toJson(MessagePost(content: text)))
+    toJson(MessagePost(content: content)))
   result = fromJson(resp, DiscordMessage)
 
 proc deleteChannelMessage*(c: GuildyClient, channelID: string, messageID: string) =
