@@ -75,6 +75,13 @@ type
     `type`*: int
     name*: Option[string]
 
+  DiscordGuild* = ref object
+    id*: string
+    name*: string
+    icon*: Option[string]
+    owner_id*: string
+    member_count*: int
+
   DiscordEmbedField* = ref object
     name*: string
     value*: string
@@ -408,6 +415,11 @@ proc disCall(c: GuildyClient, verb: string, uri: Uri, body: string = ""): string
   var rateLimitErr = newException(GuildyError, &"rate limited after {MaxRateLimitRetries} retries on {verb} {uri}")
   rateLimitErr.code = 429
   raise rateLimitErr
+
+proc getGuild*(c: GuildyClient, guildId: string): DiscordGuild =
+  ## Fetch basic information about a guild.
+  let resp = c.disCall("GET", c.apiBase / "/guilds/" / guildId)
+  result = fromJson(resp, DiscordGuild)
 
 proc getGuildChannels*(c: GuildyClient, guildID: string): seq[GuildChannel] =
   ## Fetch the list of channels in a guild.

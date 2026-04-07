@@ -30,6 +30,7 @@ proc ensureEnv() =
 const
   TestChannel = "1404137573567434783"
   MonofuelUserId = "215660018010161152"
+  MonolabGuildId = "1180587895921328158"
 
 
 suite "guildy":
@@ -57,5 +58,12 @@ suite "guildy":
     check dmChannel.len > 0
     let dm = client.postChannelMessage(dmChannel, "[guildy test dm] hello at " & $now())
     check dm.id.len > 0
+
+  test "guild: get guild info":
+    let client = newGuildyClient(token)
+    let guild = client.getGuild(MonolabGuildId)
+    check guild.id == MonolabGuildId
+    check guild.name.len > 0
+    check guild.owner_id.len > 0
 
 
