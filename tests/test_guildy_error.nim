@@ -2,6 +2,9 @@ import
   std/[unittest, strutils],
   ../src/guildy
 
+proc newTestClient(): GuildyClient =
+  GuildyClient(token: "fake-token")
+
 suite "GuildyError":
   test "has code and body fields":
     var e = (ref GuildyError)(msg: "test", code: 403, body: "{}")
@@ -23,3 +26,10 @@ suite "GuildyError":
       check caught.code == 403
       check caught.body == "{\"message\": \"Missing Permissions\"}"
       check "403" in caught.msg
+
+suite "postChannelMessage":
+  test "raises GuildyError when content exceeds 2000 characters":
+    let client = newTestClient()
+    let longContent = 'x'.repeat(2001)
+    expect GuildyError:
+      discard client.postChannelMessage("channel-id", longContent)
