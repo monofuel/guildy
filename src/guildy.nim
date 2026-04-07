@@ -69,6 +69,7 @@ type
     edited_timestamp*: Option[string]
     flags*: int
     components*: seq[JsonNode]
+    referenced_message*: JsonNode
 
   GuildChannel* = ref object
     id*: string
@@ -248,6 +249,11 @@ type
     channel_id*: Option[string]
     self_mute*: bool
     self_deaf*: bool
+
+proc newHook*(v: var DiscordMessage) =
+  ## Initialize optional DiscordMessage fields to none so missing JSON keys default correctly.
+  v = DiscordMessage()
+  v.edited_timestamp = none(string)
 
 proc newHook*(v: var GuildChannel) =
   ## Initialize optional GuildChannel fields to none so missing JSON keys default correctly.

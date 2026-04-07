@@ -116,6 +116,72 @@ suite "DiscordMessage":
     check msg.content == "test"
     check msg.author.username == "bob"
 
+suite "DiscordMessage referenced_message":
+  test "round-trip with referenced_message nil":
+    let msg = DiscordMessage(
+      id: "msg2",
+      `type`: 0,
+      content: "reply",
+      channel_id: "ch1",
+      author: Author(id: "user1", username: "alice"),
+      attachments: @[],
+      mentions: @[],
+      mention_roles: @[],
+      reactions: @[],
+      pinned: false,
+      mention_everyone: false,
+      tts: false,
+      timestamp: "2024-01-01T00:00:00Z",
+      edited_timestamp: none(string),
+      flags: 0,
+      components: @[],
+      referenced_message: nil,
+    )
+    let j = toJson(msg)
+    let msg2 = fromJson(j, DiscordMessage)
+    # nil serializes to JSON null, which deserializes to a JNull node or nil
+    check msg2.referenced_message.isNil or msg2.referenced_message.kind == JNull
+
+  test "round-trip with referenced_message set":
+    let reply = DiscordMessage(
+      id: "reply1",
+      `type`: 19,
+      content: "quoting you",
+      channel_id: "ch1",
+      author: Author(id: "user2", username: "bob"),
+      attachments: @[],
+      mentions: @[],
+      mention_roles: @[],
+      reactions: @[],
+      pinned: false,
+      mention_everyone: false,
+      tts: false,
+      timestamp: "2024-01-02T00:00:00Z",
+      edited_timestamp: none(string),
+      flags: 0,
+      components: @[],
+      referenced_message: %*{"id": "orig1", "content": "original"},
+    )
+    let j = toJson(reply)
+    let reply2 = fromJson(j, DiscordMessage)
+    check reply2.id == "reply1"
+    check not reply2.referenced_message.isNil
+    check reply2.referenced_message["id"].getStr == "orig1"
+    check reply2.referenced_message["content"].getStr == "original"
+
+  test "parse Discord JSON snippet with referenced_message absent defaults to nil":
+    let raw = """{"id":"999","type":0,"content":"test","channel_id":"ch2","author":{"id":"u2","username":"bob","avatar":"","discriminator":"0"},"attachments":[],"mentions":[],"mention_roles":[],"pinned":false,"mention_everyone":false,"tts":false,"timestamp":"2024-01-01T00:00:00.000Z","flags":0,"components":[]}"""
+    let msg = fromJson(raw, DiscordMessage)
+    check msg.referenced_message.isNil
+
+  test "parse Discord JSON snippet with referenced_message present":
+    let raw = """{"id":"r1","type":19,"content":"reply","channel_id":"ch1","author":{"id":"u1","username":"alice","avatar":"","discriminator":"0"},"attachments":[],"mentions":[],"mention_roles":[],"pinned":false,"mention_everyone":false,"tts":false,"timestamp":"2024-01-01T00:00:00.000Z","flags":0,"components":[],"referenced_message":{"id":"orig1","type":0,"content":"hello","channel_id":"ch1","author":{"id":"u2","username":"bob","avatar":"","discriminator":"0"},"attachments":[],"mentions":[],"mention_roles":[],"pinned":false,"mention_everyone":false,"tts":false,"timestamp":"2024-01-01T00:00:00.000Z","flags":0,"components":[]}}"""
+    let msg = fromJson(raw, DiscordMessage)
+    check msg.id == "r1"
+    check not msg.referenced_message.isNil
+    check msg.referenced_message["id"].getStr == "orig1"
+    check msg.referenced_message["content"].getStr == "hello"
+
 suite "GuildChannel":
   test "round-trip with name some":
     let ch = GuildChannel(id: "ch1", `type`: 0, name: some("general"))
