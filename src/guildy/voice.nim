@@ -609,8 +609,8 @@ proc connectVoiceGateway*(state: VoiceState,
     await vc.voiceEventLoop()
   except WebSocketClosedError:
     voiceLog "Voice WS closed (WebSocketClosedError)"
-  except CatchableError as e:
-    voiceLog "Voice WS error: ", e.msg, " (", e.name, ")"
+  except CatchableError:
+    voiceLog "Voice WS error: ", getCurrentExceptionMsg(), " (", getCurrentException().name, ")"
 
   # Cleanup on exit.
   when defined(guildyVoice):
