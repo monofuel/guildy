@@ -82,6 +82,12 @@ type
     owner_id*: string
     member_count*: int
 
+  GuildMember* = ref object
+    user*: Author
+    nick*: Option[string]
+    roles*: seq[string]
+    joined_at*: string
+
   DiscordEmbedField* = ref object
     name*: string
     value*: string
@@ -431,6 +437,16 @@ proc getGuild*(c: GuildyClient, guildId: string): DiscordGuild =
   ## Fetch basic information about a guild.
   let resp = c.disCall("GET", c.apiBase / "/guilds/" / guildId)
   result = fromJson(resp, DiscordGuild)
+
+proc getGuildMember*(c: GuildyClient, guildId, userId: string): GuildMember =
+  ## Fetch a single member of a guild by user ID.
+  let resp = c.disCall("GET", c.apiBase / "/guilds/" / guildId / "/members/" / userId)
+  result = fromJson(resp, GuildMember)
+
+proc listGuildMembers*(c: GuildyClient, guildId: string, limit: int = 100): seq[GuildMember] =
+  ## Fetch a list of members in a guild, up to limit.
+  let uri = (c.apiBase / "/guilds/" / guildId / "/members") ? @[("limit", $limit)]
+  result = fromJson(c.disCall("GET", uri), seq[GuildMember])
 
 proc getGuildChannels*(c: GuildyClient, guildID: string): seq[GuildChannel] =
   ## Fetch the list of channels in a guild.

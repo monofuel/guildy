@@ -230,6 +230,42 @@ suite "SlashCommand":
     check cmd2.options.len == 1
     check cmd2.options[0].name == "sides"
 
+suite "GuildMember":
+  test "round-trip with nick some":
+    let m = GuildMember(
+      user: Author(id: "u1", username: "alice"),
+      nick: some("Alice"),
+      roles: @["role1", "role2"],
+      joined_at: "2024-01-01T00:00:00Z",
+    )
+    let j = toJson(m)
+    let m2 = fromJson(j, GuildMember)
+    check m2.user.id == "u1"
+    check m2.user.username == "alice"
+    check m2.nick == some("Alice")
+    check m2.roles == @["role1", "role2"]
+    check m2.joined_at == "2024-01-01T00:00:00Z"
+
+  test "round-trip with nick none":
+    let m = GuildMember(
+      user: Author(id: "u2", username: "bob"),
+      nick: none(string),
+      roles: @[],
+      joined_at: "2024-06-15T12:00:00Z",
+    )
+    let j = toJson(m)
+    let m2 = fromJson(j, GuildMember)
+    check m2.nick.isNone
+    check m2.roles.len == 0
+
+  test "parse Discord JSON snippet":
+    let raw = """{"user":{"id":"123","username":"carol","avatar":"","discriminator":"0"},"nick":null,"roles":["abc"],"joined_at":"2023-03-10T08:00:00.000Z"}"""
+    let m = fromJson(raw, GuildMember)
+    check m.user.id == "123"
+    check m.user.username == "carol"
+    check m.nick.isNone
+    check m.roles == @["abc"]
+
 suite "PresenceData dumpHook":
   test "since none serializes as null":
     let pd = PresenceData(
