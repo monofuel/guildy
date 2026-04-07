@@ -1,0 +1,98 @@
+{
+  "agents": {
+    "architect": {
+      "harness": "claude-code",
+      "model": "claude-opus-4-6",
+      "reasoningEffort": "",
+      "hardTimeout": 7200000,
+      "noOutputTimeout": 600000,
+      "progressTimeout": 0
+    },
+    "coding": {
+      "harness": "claude-code",
+      "model": "claude-sonnet-4-6",
+      "reasoningEffort": "",
+      "hardTimeout": 14400000,
+      "noOutputTimeout": 300000,
+      "progressTimeout": 600000
+    },
+    "manager": {
+      "harness": "claude-code",
+      "model": "claude-sonnet-4-6",
+      "reasoningEffort": "",
+      "hardTimeout": 3600000,
+      "noOutputTimeout": 300000,
+      "progressTimeout": 0
+    },
+    "reviewer": {
+      "harness": "claude-code",
+      "model": "claude-sonnet-4-6",
+      "reasoningEffort": "",
+      "hardTimeout": 3600000,
+      "noOutputTimeout": 300000,
+      "progressTimeout": 0
+    },
+    "audit": {
+      "harness": "claude-code",
+      "model": "claude-haiku-4-5-20251001",
+      "reasoningEffort": "",
+      "hardTimeout": 0,
+      "noOutputTimeout": 0,
+      "progressTimeout": 0
+    }
+  },
+  "endpoints": {
+    "local": "http://127.0.0.1:8097"
+  },
+  "concurrency": {
+    "maxAgents": 8,
+    "tokenBudgetMB": 0
+  },
+  "timeouts": {
+    "codingAgentHardTimeoutMs": 14400000,
+    "codingAgentNoOutputTimeoutMs": 300000,
+    "codingAgentProgressTimeoutMs": 600000,
+    "codingAgentMaxAttempts": 5
+  },
+  "discord": {
+    "enabled": false,
+    "serverId": "",
+    "channelId": "",
+    "allowedUserIds": [],
+    "chatHistoryCount": 8
+  },
+  "mattermost": {
+    "enabled": true,
+    "url": "https://mattermost.solution-nine.monofuel.dev",
+    "channelId": "4yth11hka3y5ido3twa8phuf5c",
+    "allowedUserIds": [
+      "14bbqjnm63dq3nwk3tsjkfe9sh"
+    ],
+    "chatHistoryCount": 8
+  },
+  "loop": {
+    "enabled": false,
+    "feedback": "",
+    "goal": "",
+    "maxIterations": 0,
+    "feedbackTimeoutMs": 7200000
+  },
+  "dashboard": {
+    "host": "127.0.0.1",
+    "port": 8098
+  },
+  "devops": {
+    "enabled": false
+  },
+  "remoteSync": {
+    "enabled": true,
+    "primaryRemote": "origin",
+    "remotes": [
+      "origin"
+    ],
+    "syncIntervalSeconds": 60
+  },
+  "syncAgentsMd": true,
+  "logLevel": "",
+  "fileLogLevel": ""
+}
