@@ -131,6 +131,39 @@ suite "GuildChannel":
     let ch2 = fromJson(j, GuildChannel)
     check ch2.name.isNone
 
+  test "round-trip with all optional fields set":
+    let ch = GuildChannel(
+      id: "ch3",
+      `type`: 2,
+      name: some("voice"),
+      topic: some("chat here"),
+      parent_id: some("cat1"),
+      position: some(3),
+      nsfw: some(false),
+      bitrate: some(64000),
+      user_limit: some(10),
+    )
+    let j = toJson(ch)
+    let ch2 = fromJson(j, GuildChannel)
+    check ch2.topic == some("chat here")
+    check ch2.parent_id == some("cat1")
+    check ch2.position == some(3)
+    check ch2.nsfw == some(false)
+    check ch2.bitrate == some(64000)
+    check ch2.user_limit == some(10)
+
+  test "parse JSON with missing optional fields defaults to none":
+    let raw = """{"id":"ch4","type":0,"name":"general"}"""
+    let ch = fromJson(raw, GuildChannel)
+    check ch.id == "ch4"
+    check ch.name == some("general")
+    check ch.topic.isNone
+    check ch.parent_id.isNone
+    check ch.position.isNone
+    check ch.nsfw.isNone
+    check ch.bitrate.isNone
+    check ch.user_limit.isNone
+
 suite "InteractionUser":
   test "round-trip":
     let u = InteractionUser(id: "usr1")

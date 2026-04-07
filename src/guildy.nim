@@ -74,6 +74,12 @@ type
     id*: string
     `type`*: int
     name*: Option[string]
+    topic*: Option[string]
+    parent_id*: Option[string]
+    position*: Option[int]
+    nsfw*: Option[bool]
+    bitrate*: Option[int]
+    user_limit*: Option[int]
 
   DiscordGuild* = ref object
     id*: string
@@ -242,6 +248,17 @@ type
     channel_id*: Option[string]
     self_mute*: bool
     self_deaf*: bool
+
+proc newHook*(v: var GuildChannel) =
+  ## Initialize optional GuildChannel fields to none so missing JSON keys default correctly.
+  v = GuildChannel()
+  v.name = none(string)
+  v.topic = none(string)
+  v.parent_id = none(string)
+  v.position = none(int)
+  v.nsfw = none(bool)
+  v.bitrate = none(int)
+  v.user_limit = none(int)
 
 proc dumpHook*(s: var string, v: PresenceData) =
   ## Custom serialization so that "since" is written as null (not omitted)
