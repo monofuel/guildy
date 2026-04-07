@@ -1,5 +1,5 @@
 import
-  std/unittest
+  std/[unittest, random]
 
 include guildy
 
@@ -61,3 +61,16 @@ suite "URI construction":
   test "interactionCallbackUri constructs correct path":
     check $interactionCallbackUri(testClient, "int1", "tok1") ==
       "https://discord.com/api/v10/interactions/int1/tok1/callback"
+
+suite "Heartbeat jitter":
+  test "interval stays within expected bounds over 1000 iterations":
+    const
+      IntervalMs = 41250.0
+      Jitter = 0.1
+      MinInterval = IntervalMs.int
+      MaxInterval = (IntervalMs + IntervalMs * Jitter).int
+    randomize(42)
+    for _ in 1 .. 1000:
+      let actualInterval = (IntervalMs + rand(IntervalMs * Jitter)).int
+      check actualInterval >= MinInterval
+      check actualInterval <= MaxInterval
