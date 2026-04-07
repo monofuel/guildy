@@ -604,6 +604,18 @@ proc setSpeaking*(vc: VoiceConnection, speaking: bool) {.async.} =
   }
   await vc.ws.send($payload)
 
+proc sendUdp*(vc: VoiceConnection, data: string) =
+  ## Send raw UDP data to the voice server.
+  vc.udpSocket.sendTo(vc.ip, Port(vc.port), data)
+
+proc recvUdp*(vc: VoiceConnection, size: int): string =
+  ## Receive raw UDP data from the voice server.
+  result = newString(size)
+  var recvIp: string
+  var recvPort: Port
+  let received = vc.udpSocket.recvFrom(result, size, recvIp, recvPort)
+  result.setLen(received)
+
 proc disconnectVoice*(vc: VoiceConnection) =
   ## Close the voice WebSocket connection.
   vc.running = false

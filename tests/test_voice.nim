@@ -35,3 +35,14 @@ suite "voice opcodes":
     }
     check payload["op"].getInt == 5
     check payload["d"]["speaking"].getInt == 0
+
+suite "UDP procs":
+  test "sendUdp and recvUdp are exported":
+    # Verify the procs are accessible at compile time.
+    # A live socket is required to call them, so only compilation is checked.
+    check compiles(block:
+      var vc: VoiceConnection
+      vc.sendUdp(""))
+    check compiles(block:
+      var vc: VoiceConnection
+      discard vc.recvUdp(0))
