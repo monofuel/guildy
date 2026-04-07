@@ -16,6 +16,7 @@ test:
 	nim c $(NIM_PATHS) -r tests/test_guild_member_events.nim
 	nim c $(NIM_PATHS) -r tests/test_channel_events.nim
 	nim c $(NIM_PATHS) -r tests/test_typing_start.nim
+	nim c $(NIM_PATHS) -r tests/test_presence_update.nim
 
 integration-test:
 	@echo "no integration tests configured"

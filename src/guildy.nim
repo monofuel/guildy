@@ -189,6 +189,7 @@ type
     user_id*: string
     timestamp*: int
 
+
 # -------------------------------
 # Types — Outbound REST bodies (internal, for jsony serialization)
 
@@ -247,6 +248,15 @@ type
   PresenceActivity* = ref object
     name*: string
     `type`*: int
+
+  PresenceUser = ref object
+    id*: string
+
+  PresenceUpdateEvent = ref object
+    user*: PresenceUser
+    guild_id*: string
+    status*: string
+    activities*: seq[PresenceActivity]
 
   PresenceData* = ref object
     since*: Option[int]
@@ -308,6 +318,8 @@ type
   OnChannelEvent* = proc(c: GuildyClient, channel: GuildChannel) {.gcsafe.}
   # Requires IntentGuildMessageTyping (bit 11) or IntentDirectMessageTyping (bit 14).
   OnTypingStartEvent* = proc(c: GuildyClient, channelId: string, userId: string, timestamp: int) {.gcsafe.}
+  # Requires IntentGuildPresences (bit 8) privileged intent.
+  OnPresenceUpdateEvent* = proc(c: GuildyClient, guildId: string, userId: string, status: string) {.gcsafe.}
 
   GuildyError* = object of CatchableError
     code*: int
@@ -343,6 +355,7 @@ type
     onChannelUpdate*: OnChannelEvent
     onChannelDelete*: OnChannelEvent
     onTypingStart*: OnTypingStartEvent
+    onPresenceUpdate*: OnPresenceUpdateEvent
 
     # Voice
     voiceStates*: Table[string, VoiceState]
@@ -774,6 +787,10 @@ proc handleEvent(
     if c.onTypingStart != nil:
       let ev = fromJson($event["d"], TypingStartEvent)
       c.onTypingStart(c, ev.channel_id, ev.user_id, ev.timestamp)
+  elif t == "PRESENCE_UPDATE":
+    if c.onPresenceUpdate != nil:
+      let ev = fromJson($event["d"], PresenceUpdateEvent)
+      c.onPresenceUpdate(c, ev.guild_id, ev.user.id, ev.status)
   elif t == "MESSAGE_CREATE" or t == "MESSAGE_UPDATE":
     if c.onMessage != nil:
       let msg = fromJson($event["d"], DiscordMessage)
