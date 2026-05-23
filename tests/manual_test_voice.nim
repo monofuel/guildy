@@ -69,12 +69,12 @@ suite "guildy voice":
     let channels = client.getGuildChannels(MonolabGuildId)
     echo "Channels in Monolab:"
     for ch in channels:
-      let kind = case ch.channel_type
+      let kind = case ch.`type`
         of 0: "text"
         of 2: "voice"
         of 4: "category"
         of 13: "stage"
-        else: "type=" & $ch.channel_type
+        else: "type=" & $ch.`type`
       echo "  ", kind, " | ", ch.id, " | ", ch.name
 
   test "voice DAVE handshake":
@@ -93,7 +93,7 @@ suite "guildy voice":
     let channels = restClient.getGuildChannels(MonolabGuildId)
     var voiceChannelId = ""
     for ch in channels:
-      if ch.channel_type == 2:
+      if ch.`type` == 2:
         voiceChannelId = ch.id
         logPhase("SETUP", "Found voice channel: " & ch.name.get("?") & " (" & ch.id & ")")
         break

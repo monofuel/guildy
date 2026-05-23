@@ -1,7 +1,7 @@
 ## Voice types, opcodes, and WebSocket connection for Discord voice.
 
 import
-  std/[json, asyncdispatch, times, random, strutils, net, nativesockets],
+  std/[json, asyncdispatch, times, random, strutils, net, nativesockets, locks],
   ws
 
 from std/posix import Timeval, Time, Suseconds, setsockopt, SOL_SOCKET, SO_RCVTIMEO
@@ -81,6 +81,7 @@ type
     ip*: string
     port*: uint16
     modes*: seq[string]
+    selectedMode*: string # set on select_protocol; the actual wire mode in use
     secretKey*: seq[uint8]
     running*: bool
     lastHeartbeat*: float
@@ -101,6 +102,8 @@ type
       daveHasExternalSender*: bool
       daveKeyPackageSent*: bool
       onDaveRosterChange*: OnDaveRosterChangeEvent
+      ssrcToUserId*: Table[uint32, string]
+      ssrcLock*: Lock
 
   OnVoiceStateEvent* = proc(state: VoiceState) {.gcsafe.}
   OnVoiceConnectedEvent* = proc(vc: VoiceConnection) {.gcsafe.}
@@ -322,8 +325,22 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
     voiceLog "UDP IP discovered: ", extIp, ":", extPort
     vc.fireMilestone(vmUdpDiscovered)
 
-    # Send Select Protocol (op 1)
-    let mode = if vc.modes.len > 0: vc.modes[0] else: "aead_aes256_gcm_rtpsize"
+    # Send Select Protocol (op 1). Prefer AES-256-GCM if Discord advertises it,
+    # otherwise XChaCha20-Poly1305. Whichever we pick is what the wire uses.
+    var mode = ""
+    for m in vc.modes:
+      if m == "aead_aes256_gcm_rtpsize":
+        mode = m
+        break
+    if mode == "":
+      for m in vc.modes:
+        if m == "aead_xchacha20_poly1305_rtpsize":
+          mode = m
+          break
+    if mode == "":
+      mode = if vc.modes.len > 0: vc.modes[0]
+             else: "aead_aes256_gcm_rtpsize"
+    vc.selectedMode = mode
     let selectPayload = %*{
       "op": VoiceSelectProtocolOp,
       "d": {
@@ -352,12 +369,35 @@ proc handleVoiceTextEvent(vc: VoiceConnection, event: JsonNode) {.async.} =
         vc.daveProtocolVersion = d["dave_protocol_version"].getInt.uint16
         voiceLog "DAVE: SessionDescription dave_protocol_version=",
             vc.daveProtocolVersion
+    # Announce speaking. Without this, Discord drops outbound RTP packets
+    # server-side. We send it from the voice WS dispatcher to avoid the
+    # cross-thread race with the heartbeat loop. Inlined here because
+    # setSpeaking is declared later in this file.
+    let speakingPayload = %*{
+      "op": VoiceSpeakingOp,
+      "d": {
+        "speaking": 1,
+        "delay": 0,
+        "ssrc": vc.ssrc
+      }
+    }
+    await vc.ws.send($speakingPayload)
+    voiceLog "Voice: announced speaking=1"
   of VoiceHeartbeatAckOp:
     vc.lastHeartbeat = epochTime()
   of VoiceHelloOp:
     discard
   of VoiceResumedOp:
     discard
+  of VoiceSpeakingOp:
+    when defined(guildyVoice):
+      let d = event["d"]
+      if d.hasKey("ssrc") and d.hasKey("user_id"):
+        let speakerSsrc = d["ssrc"].getInt.uint32
+        let speakerUserId = d["user_id"].getStr
+        withLock vc.ssrcLock:
+          vc.ssrcToUserId[speakerSsrc] = speakerUserId
+        voiceLog "Speaking: ssrc=", speakerSsrc, " user=", speakerUserId
   of VoiceClientDisconnectOp:
     when defined(guildyVoice):
       let d = event["d"]
@@ -562,6 +602,8 @@ proc connectVoiceGateway*(state: VoiceState,
     vc.daveTransitions = initTable[int, uint16]()
     vc.recognizedUserIds = @[]
     vc.latestPreparedTransitionVersion = 0
+    vc.ssrcToUserId = initTable[uint32, string]()
+    initLock(vc.ssrcLock)
     voiceLog "DAVE: session created, max protocol version=",
         daveMaxSupportedProtocolVersion()
     vc.fireMilestone(vmDaveSessionCreated)
